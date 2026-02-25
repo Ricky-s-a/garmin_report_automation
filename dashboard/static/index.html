@@ -37,6 +37,7 @@
             <div class="top-nav">
                 <button id="btn-single" class="nav-btn active">Single Run View</button>
                 <button id="btn-trends" class="nav-btn">Long-Term Trends</button>
+                <button id="btn-trail" class="nav-btn">Trail Calculator</button>
             </div>
             <div id="welcome-message" class="welcome-message">
                 <h2>Select a run from the sidebar to view advanced insights.</h2>
@@ -155,6 +156,91 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Trail Calculator View -->
+            <div id="trail-view" class="dashboard-view hidden">
+                <header class="run-header">
+                    <h2>⛰️ Trail Pace Calculator</h2>
+                    <p>Predict your race time based on your past elevation-heavy runs.</p>
+                </header>
+
+                <div class="card" style="margin-bottom: 24px;">
+                    <h3>New Race Info</h3>
+                    <div style="margin-top: 12px; margin-bottom: 16px;">
+                        <label
+                            style="font-weight: 500; font-size: 0.9rem; color: #64748b; display: block; margin-bottom: 4px;">Preset
+                            Races</label>
+                        <select id="trail-presets"
+                            style="padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 1rem; width: 100%; max-width: 300px;">
+                            <option value="">-- 手動で入力 --</option>
+                            <option value="kumotori">雲取山 (20km, 1400m)</option>
+                            <option value="hirubiston">ヒルビストン (25km, 2469m)</option>
+                            <option value="tanzawa">丹沢ケルベロス (30km, 2500m)</option>
+                            <option value="takao">高尾マンモス (35km, 2000m)</option>
+                            <option value="tarasaru">トラサル (40km, 2800m)</option>
+                            <option value="gaireen">ガイリーン (50km, 3000m)</option>
+                            <option value="mtfuji">Mt.Fuji Kai (70km, 3400m)</option>
+                        </select>
+                    </div>
+
+                    <div style="display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap;">
+                        <div>
+                            <label
+                                style="font-weight: 500; font-size: 0.9rem; color: #64748b; display: block; margin-bottom: 4px;">Target
+                                Distance (km)</label>
+                            <input type="number" id="trail-target-dist" value="25"
+                                style="padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 6px; width: 140px; font-size: 1rem;" />
+                        </div>
+                        <div>
+                            <label
+                                style="font-weight: 500; font-size: 0.9rem; color: #64748b; display: block; margin-bottom: 4px;">Elevation
+                                Gain (m)</label>
+                            <input type="number" id="trail-target-elev" value="2469"
+                                style="padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 6px; width: 140px; font-size: 1rem;" />
+                        </div>
+                        <div>
+                            <button id="btn-calc-trail" class="btn"
+                                style="background: #10b981; color: white; border: none; padding: 10px 24px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 1rem;">Predict
+                                Time</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="metrics-grid">
+                    <div class="metric-card" style="border-left: 4px solid #10b981;">
+                        <span class="label">Predicted Race Time</span>
+                        <span class="value" id="trail-pred-time" style="color: #10b981;">--:--:--</span>
+                    </div>
+                    <div class="metric-card">
+                        <span class="label">Total Effort Distance</span>
+                        <span class="value" id="trail-effort-dist">-- km</span>
+                    </div>
+                    <div class="metric-card">
+                        <span class="label">Predicted Avg Pace</span>
+                        <span class="value" id="trail-pred-pace" style="font-size: 1.3rem;">--:-- /km</span>
+                    </div>
+                </div>
+
+                <div class="card chart-card">
+                    <h3>Your Base Trail Stats (From Garmin Data)</h3>
+                    <div style="margin-top: 10px; font-size: 0.95rem; line-height: 1.8; color: #475569;">
+                        <p>Total Known Trail Runs Detected (D+ > 30m/km): <strong id="trail-base-count"
+                                style="color: #0ea5e9;">0</strong></p>
+                        <p>Regression Model: <strong id="trail-regression-formula" style="color: #0f172a;">Pace (s/km) =
+                                a * D+ (m/km) + b</strong></p>
+                        <p style="font-size: 0.85rem; color: #94a3b8; margin-top: 12px;">※ The prediction treats every
+                            100m of elevation gain as 1 extra kilometer of flat running (ITRA standard formula).</p>
+                    </div>
+                </div>
+
+                <!-- Prediction Chart -->
+                <div class="card chart-card" style="margin-top: 24px; margin-bottom: 24px;">
+                    <h3>トレランの上昇高度におけるペースとタイム予測</h3>
+                    <div class="chart-container" style="height: 400px;">
+                        <canvas id="trailPredictionChart"></canvas>
+                    </div>
+                </div>
+            </div>
         </main>
     </div>
 
@@ -164,7 +250,7 @@
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
-    <script src="/static/script.js?v=2"></script>
+    <script src="/static/script.js?v=5"></script>
 </body>
 
 </html>
