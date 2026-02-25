@@ -68,6 +68,22 @@ function setupNavigation() {
         });
     }
 
+    // Horizontal Mobile Sidebar Toggle
+    const btnToggleSidebar = document.getElementById('btn-toggle-sidebar');
+    const sidebar = document.getElementById('sidebar');
+    const sidebarOverlay = document.getElementById('sidebar-overlay');
+
+    if (btnToggleSidebar && sidebar && sidebarOverlay) {
+        btnToggleSidebar.addEventListener('click', () => {
+            sidebar.classList.add('open');
+            sidebarOverlay.classList.add('active');
+        });
+        sidebarOverlay.addEventListener('click', () => {
+            sidebar.classList.remove('open');
+            sidebarOverlay.classList.remove('active');
+        });
+    }
+
     const searchInput = document.getElementById('search-input');
     if (searchInput) {
         searchInput.addEventListener('input', (e) => {
@@ -195,6 +211,14 @@ function renderSidebar(activities) {
             document.querySelectorAll('.activity-item').forEach(el => el.classList.remove('active'));
             item.classList.add('active');
             loadActivityDetails(act, activities);
+
+            // Close mobile sidebar if open
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.getElementById('sidebar-overlay');
+            if (sidebar && sidebar.classList.contains('open')) {
+                sidebar.classList.remove('open');
+                overlay.classList.remove('active');
+            }
         });
 
         listEl.appendChild(item);

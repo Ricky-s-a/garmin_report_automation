@@ -436,3 +436,70 @@ body {
     color: #475569;
     font-weight: 500;
 }
+
+/* Mobile Sidebar (Horizontal Collapse) */
+.hamburger-btn {
+    display: none;
+    position: fixed;
+    top: 12px;
+    left: 16px;
+    z-index: 1000;
+    background: var(--color-accent);
+    color: white;
+    border: none;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: var(--shadow-md);
+}
+
+.sidebar-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(15, 23, 42, 0.4);
+    z-index: 900;
+    backdrop-filter: blur(2px);
+}
+
+@media (max-width: 768px) {
+    .hamburger-btn {
+        display: block;
+    }
+
+    .sidebar {
+        position: fixed;
+        left: 0;
+        top: 0;
+        height: 100vh;
+        z-index: 999;
+        transform: translateX(-100%);
+        transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        width: 320px;
+        max-width: 85vw;
+    }
+
+    .sidebar.open {
+        transform: translateX(0);
+        box-shadow: 4px 0 15px rgba(0, 0, 0, 0.1);
+    }
+
+    .sidebar-overlay.active {
+        display: block;
+    }
+
+    .main-content {
+        padding: 16px;
+        padding-top: 60px;
+        /* Space for hamburger */
+    }
+
+    .top-nav {
+        flex-wrap: wrap;
+    }
+}
