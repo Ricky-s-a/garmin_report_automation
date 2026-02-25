@@ -698,11 +698,8 @@ document.getElementById('trail-presets').addEventListener('change', (e) => {
     calculateTrailTime();
 });
 
-document.getElementById('trail-target-dist')?.addEventListener('input', calculateTrailTime);
-document.getElementById('trail-target-elev')?.addEventListener('input', calculateTrailTime);
-
-document.getElementById('trail-filter-elev')?.addEventListener('change', renderTrailCalculator);
-document.getElementById('trail-filter-pace')?.addEventListener('change', renderTrailCalculator);
+document.getElementById('trail-filter-elev')?.addEventListener('input', renderTrailCalculator);
+document.getElementById('trail-filter-pace')?.addEventListener('input', renderTrailCalculator);
 
 function renderTrailCalculator() {
     if (!globalActivities || globalActivities.length === 0) return;
