@@ -54,6 +54,20 @@ function setupNavigation() {
         renderTrailCalculator();
     });
 
+    const toggleHeaderBtn = document.getElementById('btn-toggle-header');
+    const headerContent = document.getElementById('sidebar-header-content');
+    if (toggleHeaderBtn && headerContent) {
+        toggleHeaderBtn.addEventListener('click', () => {
+            if (headerContent.style.display === 'none') {
+                headerContent.style.display = 'block';
+                toggleHeaderBtn.textContent = '▲';
+            } else {
+                headerContent.style.display = 'none';
+                toggleHeaderBtn.textContent = '▼';
+            }
+        });
+    }
+
     const searchInput = document.getElementById('search-input');
     if (searchInput) {
         searchInput.addEventListener('input', (e) => {

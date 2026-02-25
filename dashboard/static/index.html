@@ -20,15 +20,25 @@
         <!-- Sidebar: List of Activities -->
         <aside class="sidebar" id="sidebar">
             <div class="sidebar-header">
-                <h1>Coach Pro</h1>
-                <p>Advanced Running Analytics</p>
-                <button id="btn-sync" class="btn"
-                    style="width: 100%; margin: 10px 0; background: #0ea5e9; color: white; border: none; padding: 8px; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px;">🔄
-                    Sync with Garmin</button>
-                <div id="sync-status" style="font-size: 0.8rem; color: #64748b; margin-bottom: 10px; display: none;">
-                    Syncing...</div>
-                <div class="search-box">
-                    <input type="text" id="search-input" placeholder="Search runs or notes...">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                    <div>
+                        <h1>Coach Pro</h1>
+                        <p>Advanced Running Analytics</p>
+                    </div>
+                    <button id="btn-toggle-header"
+                        style="background: none; border: none; font-size: 1.2rem; cursor: pointer; color: #64748b; padding: 4px;"
+                        title="Toggle Menu">▲</button>
+                </div>
+                <div id="sidebar-header-content" style="margin-top: 10px;">
+                    <button id="btn-sync" class="btn"
+                        style="width: 100%; margin-bottom: 10px; background: #0ea5e9; color: white; border: none; padding: 8px; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px;">🔄
+                        Sync with Garmin</button>
+                    <div id="sync-status"
+                        style="font-size: 0.8rem; color: #64748b; margin-bottom: 10px; display: none;">
+                        Syncing...</div>
+                    <div class="search-box">
+                        <input type="text" id="search-input" placeholder="Search runs or notes...">
+                    </div>
                 </div>
             </div>
             <div class="activities-list" id="activities-list">
