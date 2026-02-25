@@ -9,7 +9,7 @@ def setup():
 
 def check_env_vars():
     """Ensure required environment variables are present."""
-    required_vars = ["GARMIN_EMAIL", "GARMIN_PASSWORD"]
+    required_vars = ["GARMIN_EMAIL", "GARMIN_PASSWORD", "SUPABASE_URL", "SUPABASE_KEY"]
     # Temporarily removed: "GEMINI_API_KEY", "GCP_SA_KEY", "CALENDAR_ID"
     missing_vars = [var for var in required_vars if not os.environ.get(var)]
     if missing_vars:

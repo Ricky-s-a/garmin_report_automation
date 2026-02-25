@@ -1,12 +1,19 @@
 import os
-import csv
 import logging
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, date
 from garminconnect import Garmin
+from supabase import create_client, Client
 
-def parse_gpx_to_csv(gpx_path: str, activity_id: str, csv_path: str):
-    """Parse a downloaded GPX file and append its track points to a CSV."""
+def get_supabase_client() -> Client:
+    url = os.environ.get("SUPABASE_URL")
+    key = os.environ.get("SUPABASE_KEY")
+    if not url or not key:
+        raise ValueError("Supabase credentials not found. Check SUPABASE_URL and SUPABASE_KEY in .env")
+    return create_client(url, key)
+
+def parse_gpx_to_supabase(gpx_path: str, activity_id: str, supabase: Client):
+    """Parse a downloaded GPX file and append its track points to Supabase."""
     ns = {
         'default': 'http://www.topografix.com/GPX/1/1',
         'gpxtpx': 'http://www.garmin.com/xmlschemas/TrackPointExtension/v1'
@@ -21,83 +28,77 @@ def parse_gpx_to_csv(gpx_path: str, activity_id: str, csv_path: str):
     
     points = []
     
-    # Traverse GPX structure: trk -> trkseg -> trkpt
     for trk in root.findall('default:trk', ns):
         for trkseg in trk.findall('default:trkseg', ns):
             for trkpt in trkseg.findall('default:trkpt', ns):
-                lat = trkpt.get('lat', '')
-                lon = trkpt.get('lon', '')
+                lat_str = trkpt.get('lat', '')
+                lon_str = trkpt.get('lon', '')
                 
                 ele_node = trkpt.find('default:ele', ns)
-                ele = ele_node.text if ele_node is not None else ''
+                ele_str = ele_node.text if ele_node is not None else ''
                 
                 time_node = trkpt.find('default:time', ns)
                 time_str = time_node.text if time_node is not None else ''
                 
-                hr = ''
-                cad = ''
+                hr_str = ''
+                cad_str = ''
                 
-                # Garmin extensions hold HR and Cadence
                 extensions = trkpt.find('default:extensions', ns)
                 if extensions is not None:
                     tpe = extensions.find('gpxtpx:TrackPointExtension', ns)
                     if tpe is not None:
                         hr_node = tpe.find('gpxtpx:hr', ns)
                         if hr_node is not None:
-                            hr = hr_node.text
+                            hr_str = hr_node.text
                         cad_node = tpe.find('gpxtpx:cad', ns)
                         if cad_node is not None:
-                            cad = cad_node.text
-                            
-                points.append({
-                    'activityId': activity_id,
+                            cad_str = cad_node.text
+                
+                pt = {
+                    'activityId': str(activity_id),
                     'time': time_str,
-                    'latitude': lat,
-                    'longitude': lon,
-                    'elevation': ele,
-                    'heartRate': hr,
-                    'cadence': cad
-                })
+                }
+                if lat_str: pt['latitude'] = float(lat_str)
+                if lon_str: pt['longitude'] = float(lon_str)
+                if ele_str: pt['elevation'] = float(ele_str)
+                if hr_str: pt['heartRate'] = float(hr_str)
+                if cad_str: pt['cadence'] = float(cad_str)
+                            
+                points.append(pt)
                 
     if not points:
         return
         
-    file_exists = os.path.exists(csv_path) and os.path.getsize(csv_path) > 0
-    fieldnames = ['activityId', 'time', 'latitude', 'longitude', 'elevation', 'heartRate', 'cadence']
-    
-    with open(csv_path, 'a', encoding='utf-8', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        if not file_exists:
-            writer.writeheader()
-        writer.writerows(points)
+    # Insert in batches to avoid payload size limits
+    batch_size = 500
+    for i in range(0, len(points), batch_size):
+        batch = points[i:i + batch_size]
+        try:
+            supabase.table("gpx_points").insert(batch).execute()
+        except Exception as e:
+            logging.error(f"Failed to insert GPX batch for activity {activity_id}: {e}")
 
 def fetch_garmin_data() -> list:
-    """Fetch Garmin activities, generate CSV records and GPX detail points."""
+    """Fetch Garmin activities, generate Supabase records and GPX detail points."""
     email = os.environ.get("GARMIN_EMAIL")
     password = os.environ.get("GARMIN_PASSWORD")
     
     logging.info("Initializing Garmin client...")
     client = Garmin(email, password)
     client.login()
+    
+    supabase = get_supabase_client()
 
-    raw_dir = "data/raw"
-    os.makedirs(raw_dir, exist_ok=True)
-    csv_file = os.path.join(raw_dir, "all_activities.csv")
-    gpx_csv_file = os.path.join(raw_dir, "all_gpx_points.csv")
     gpx_dir = "data/gpx"
     os.makedirs(gpx_dir, exist_ok=True)
     
-    # Read existing IDs to avoid duplicates
+    # Read existing IDs from Supabase to avoid duplicates
     existing_ids = set()
-    file_exists = os.path.exists(csv_file) and os.path.getsize(csv_file) > 0
-    if file_exists:
-        with open(csv_file, 'r', encoding='utf-8') as f:
-            reader = csv.reader(f)
-            header = next(reader, None)
-            if header:
-                for row in reader:
-                    if row:
-                        existing_ids.add(str(row[0])) # activityId is the first column
+    try:
+        response = supabase.table("activities").select("activityId").execute()
+        existing_ids = {str(row['activityId']) for row in response.data}
+    except Exception as e:
+        logging.error(f"Failed to fetch existing activity IDs from Supabase: {e}")
 
     activities_all = []
     start = 0
@@ -131,50 +132,44 @@ def fetch_garmin_data() -> list:
         and "MyFitnessPal" not in str(a.get('activityName', ''))
     ]
     
-    # Define comprehensive columns to extract for detailed performance analysis
-    fieldnames = [
-        "activityId", "activityName", "startTimeLocal", "startTimeGMT", "distance", 
-        "duration", "elapsedDuration", "movingDuration", "elevationGain", "elevationLoss", 
-        "averageSpeed", "maxSpeed", "avgGradeAdjustedSpeed", "calories", "bmrCalories", 
-        "averageHR", "maxHR", "averageRunningCadenceInStepsPerMinute", "maxRunningCadenceInStepsPerMinute", 
-        "steps", "avgStrideLength", "vO2MaxValue", "avgPower", "maxPower", "normPower",
-        "aerobicTrainingEffect", "anaerobicTrainingEffect", "trainingEffectLabel",
-        "activityTrainingLoad", "aerobicTrainingEffectMessage", "anaerobicTrainingEffectMessage",
-        "minTemperature", "maxTemperature", "minElevation", "maxElevation", "avgElevation",
-        "maxVerticalSpeed", "waterEstimated", "lapCount", "moderateIntensityMinutes", "vigorousIntensityMinutes",
-        "fastestSplit_1000", "fastestSplit_1609", "fastestSplit_5000",
-        "hrTimeInZone_1", "hrTimeInZone_2", "hrTimeInZone_3", "hrTimeInZone_4", "hrTimeInZone_5",
-        "powerTimeInZone_1", "powerTimeInZone_2", "powerTimeInZone_3", "powerTimeInZone_4", "powerTimeInZone_5",
-        "startLatitude", "startLongitude", "endLatitude", "endLongitude", "locationName", "manufacturer", "description",
-        "avgVerticalOscillation", "avgVerticalRatio", "avgGroundContactTime", "avgGroundContactBalance"
+    keys_to_save = [
+        "activityId", "activityName", "startTimeLocal", "distance", 
+        "duration", "averageSpeed", "averageHR", "maxHR", "elevationGain"
     ]
     
     new_records = 0
-    with open(csv_file, 'a', encoding='utf-8', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
-        if not file_exists:
-            writer.writeheader()
             
-        for activity in running_activities:
-            act_id = str(activity.get('activityId'))
-            if act_id not in existing_ids:
-                writer.writerow(activity)
+    for activity in running_activities:
+        act_id = str(activity.get('activityId'))
+        if act_id not in existing_ids:
+            # Build dict with only keys that are in the table
+            row_data = {}
+            for k in keys_to_save:
+                val = activity.get(k)
+                if val is not None:
+                    row_data[k] = val
+                    
+            try:
+                supabase.table("activities").insert(row_data).execute()
                 existing_ids.add(act_id)
                 new_records += 1
+            except Exception as e:
+                logging.error(f"Failed to insert activity {act_id} into Supabase: {e}")
+                continue # Skip GPX if activity insert failed
                 
-                # Download and parse GPX file
-                try:
-                    gpx_data = client.download_activity(int(act_id), dl_fmt=client.ActivityDownloadFormat.GPX)
-                    gpx_path = os.path.join(gpx_dir, f"{act_id}.gpx")
-                    with open(gpx_path, "wb") as gpx_file:
-                        gpx_file.write(gpx_data)
-                    
-                    # Convert GPX to CSV rows
-                    parse_gpx_to_csv(gpx_path, act_id, gpx_csv_file)
-                except Exception as e:
-                    logging.warning(f"Could not download or parse GPX for activity {act_id}: {e}")
+            # Download and parse GPX file
+            try:
+                gpx_data = client.download_activity(int(act_id), dl_fmt=client.ActivityDownloadFormat.GPX)
+                gpx_path = os.path.join(gpx_dir, f"{act_id}.gpx")
+                with open(gpx_path, "wb") as gpx_file:
+                    gpx_file.write(gpx_data)
                 
-    logging.info(f"Saved {new_records} new activities to {csv_file}")
+                # Insert GPX to Supabase
+                parse_gpx_to_supabase(gpx_path, act_id, supabase)
+            except Exception as e:
+                logging.warning(f"Could not download or parse GPX for activity {act_id}: {e}")
+                
+    logging.info(f"Saved {new_records} new activities to Supabase")
     
     # Return ONLY the last 7 days for Gemini to analyze
     recent_activities = [

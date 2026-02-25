@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from src.garmin import fetch_garmin_data
+from src.garmin import fetch_garmin_data, get_supabase_client
 
 load_dotenv()
 
@@ -39,20 +39,17 @@ def sync_data():
 
 @app.get("/api/activities")
 def get_activities():
-    csv_path = "data/raw/all_activities.csv"
-    if not os.path.exists(csv_path):
+    try:
+        supabase = get_supabase_client()
+        response = supabase.table("activities").select("*").execute()
+    except Exception as e:
         return []
     
-    try:
-        df = pd.read_csv(csv_path)
-    except pd.errors.EmptyDataError:
+    if not response.data:
         return []
 
-    if df.empty or 'activityId' not in df.columns:
-        return []
-        
+    df = pd.DataFrame(response.data)
     df = df.fillna('')
-    # Convert activity ID to string to ensure stable JS handling
     df['activityId'] = df['activityId'].astype(str)
     
     if 'startTimeLocal' in df.columns:
@@ -62,25 +59,16 @@ def get_activities():
 
 @app.get("/api/activities/{activity_id}/gpx")
 def get_activity_gpx(activity_id: str):
-    csv_path = "data/raw/all_gpx_points.csv"
-    if not os.path.exists(csv_path):
-        return []
-        
-    # Read in chunks or simply load filtering by ID if file isn't too huge
-    # For robust production, consider reading just the needed rows or using a database.
     try:
-        df = pd.read_csv(csv_path, dtype={'activityId': str})
-    except pd.errors.EmptyDataError:
+        supabase = get_supabase_client()
+        response = supabase.table("gpx_points").select("*").eq("activityId", activity_id).execute()
+    except Exception as e:
         return []
     
-    if df.empty or 'activityId' not in df.columns:
+    if not response.data:
         return []
-        
-    # Filter for the specific activity
-    df_filtered = df[df['activityId'] == activity_id]
-    if df_filtered.empty:
-        return []
-        
+
+    df_filtered = pd.DataFrame(response.data)
     df_filtered = df_filtered.fillna('')
     
     # Attempt to convert types for charts
@@ -95,18 +83,16 @@ def get_activity_gpx(activity_id: str):
 
 @app.get("/api/activities/{activity_id}/analysis")
 def get_activity_analysis(activity_id: str):
-    csv_path = "data/raw/all_activities.csv"
-    if not os.path.exists(csv_path):
-        raise HTTPException(status_code=404, detail="Data not found")
+    try:
+        supabase = get_supabase_client()
+        response = supabase.table("activities").select("*").eq("activityId", activity_id).execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Database connection error")
         
-    df = pd.read_csv(csv_path)
-    df['activityId'] = df['activityId'].astype(str)
-    
-    df_filtered = df[df['activityId'] == activity_id]
-    if df_filtered.empty:
+    if not response.data:
         raise HTTPException(status_code=404, detail="Activity not found")
         
-    activity = df_filtered.iloc[0].fillna('').to_dict()
+    activity = response.data[0]
     
     # Read system prompt
     base_dir = os.path.dirname(os.path.dirname(__file__))
@@ -118,19 +104,51 @@ def get_activity_analysis(activity_id: str):
         system_instruction = "You are a running coach."
         
     # Prepare user prompt
-    dist_km = float(activity.get('distance', 0)) / 1000
-    duration_s = float(activity.get('duration', 0))
+    dist_m = activity.get('distance')
+    dist_km = float(dist_m if dist_m else 0) / 1000
+    
+    duration_s = float(activity.get('duration', 0) or 0)
     m = int(duration_s // 60)
     s = int(duration_s % 60)
     
     pace_str = "--"
-    speed_ms = float(activity.get('averageSpeed', 0))
+    speed_ms = float(activity.get('averageSpeed', 0) or 0)
     if speed_ms > 0:
         mins_per_km = 1000 / speed_ms / 60
         pm = int(mins_per_km)
         ps = int((mins_per_km - pm) * 60)
         pace_str = f"{pm}:{ps:02d} / km"
         
+    # Fetch GPX data for deeper analysis
+    gpx_summary = "詳細推移データ(GPX): データなし"
+    try:
+        gpx_resp = supabase.table("gpx_points").select("*").eq("activityId", activity_id).execute()
+        if gpx_resp.data:
+            import numpy as np
+            gpx_filtered = pd.DataFrame(gpx_resp.data)
+            gpx_filtered['elevation'] = pd.to_numeric(gpx_filtered['elevation'], errors='coerce').fillna(0)
+            gpx_filtered['heartRate'] = pd.to_numeric(gpx_filtered['heartRate'], errors='coerce').fillna(0)
+            gpx_filtered['cadence'] = pd.to_numeric(gpx_filtered['cadence'], errors='coerce').fillna(0)
+            
+            # Split the data into 10 temporal buckets
+            chunks = np.array_split(gpx_filtered, min(10, len(gpx_filtered)))
+            trend_lines = []
+            for i, chunk in enumerate(chunks):
+                avg_hr = chunk['heartRate'].mean()
+                avg_cad = chunk['cadence'].mean()
+                avg_ele = chunk['elevation'].mean()
+                
+                hr_str = f"{avg_hr:.0f}bpm" if not np.isnan(avg_hr) else "--"
+                cad_str = f"{avg_cad:.0f}spm" if not np.isnan(avg_cad) else "--"
+                ele_str = f"{avg_ele:.0f}m" if not np.isnan(avg_ele) else "--"
+                
+                trend_lines.append(f" - [%{i*10} ~ %{(i+1)*10}区間] 心拍: {hr_str}, 標高: {ele_str}, ピッチ: {cad_str}")
+            
+            if trend_lines:
+                gpx_summary = "詳細推移データ(Run全体を10分割したときの平均遷移):\n" + "\n".join(trend_lines)
+    except Exception as e:
+        print(f"GPX parsing error: {e}")
+
     user_content = f"""本日のランニングデータ:
 距離: {dist_km:.2f} km
 時間: {m}分{s}秒
@@ -139,9 +157,12 @@ def get_activity_analysis(activity_id: str):
 最大心拍数: {activity.get('maxHR', 'Unknown')} bpm
 累積標高: {activity.get('elevationGain', 0)} m
 主観的疲労度(RPE): 確認不能 (データなし)
+
+{gpx_summary}
+
 ユーザーの現状: 最近はベース構築をメインに行っており、将来的にはMt.Fuji Kai 70kのような長距離レースに参加したいと考えている。
 
-上記のデータを評価し、アドバイスをお願いします。
+上記のデータを評価し、アドバイスをお願いします。特に、区間ごとの心拍や標高の遷移(詳細推移データ)から「後半タレていないか」「上りで心拍を使いすぎていないか」などを分析してください。
 """
 
     api_key = os.environ.get("GEMINI_API_KEY")
