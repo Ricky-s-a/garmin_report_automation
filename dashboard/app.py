@@ -82,7 +82,7 @@ def get_activity_gpx(activity_id: str):
     return df_filtered.to_dict(orient="records")
 
 @app.get("/api/activities/{activity_id}/analysis")
-def get_activity_analysis(activity_id: str):
+def get_activity_analysis(activity_id: str, regenerate: bool = False):
     try:
         supabase = get_supabase_client()
         response = supabase.table("activities").select("*").eq("activityId", activity_id).execute()
@@ -93,6 +93,11 @@ def get_activity_analysis(activity_id: str):
         raise HTTPException(status_code=404, detail="Activity not found")
         
     activity = response.data[0]
+    
+    # Return cached analysis if it exists and regenerate is not requested
+    cached = activity.get("aiAnalysis")
+    if cached and not regenerate:
+        return {"analysis": cached, "cached": True}
     
     # Read system prompt
     base_dir = os.path.dirname(os.path.dirname(__file__))
@@ -222,7 +227,15 @@ def get_activity_analysis(activity_id: str):
                 system_instruction=system_instruction,
             ),
         )
-        return {"analysis": response.text}
+        analysis_text = response.text
+        
+        # Save the result back to Supabase for future use
+        try:
+            supabase.table("activities").update({"aiAnalysis": analysis_text}).eq("activityId", activity_id).execute()
+        except Exception as save_err:
+            print(f"Warning: failed to cache AI analysis to Supabase: {save_err}")
+        
+        return {"analysis": analysis_text}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

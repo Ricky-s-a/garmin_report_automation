@@ -248,11 +248,20 @@ async function loadActivityDetails(activity, allActivities) {
 
 
 
-    // Setup AI Analysis Button
+    // Setup AI Analysis Section
     const aiContent = document.getElementById('ai-analysis-content');
-    aiContent.innerHTML = `<button id="btn-generate-ai" class="btn" style="background: #8b5cf6; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: 600;">Generate AI Analysis</button>`;
 
-    document.getElementById('btn-generate-ai').addEventListener('click', async () => {
+    function renderAnalysisHtml(text) {
+        let html = text;
+        html = html.replace(/\n\n/g, '<br><br>');
+        html = html.replace(/\n/g, '<br/>');
+        html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+        html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
+        html = html.replace(/#(.*?)(<br\/>|$)/g, '<h4><strong>$1</strong></h4>');
+        return html;
+    }
+
+    async function runAnalysis(regenerate = false) {
         let seconds = 0;
         const timerId = setInterval(() => {
             seconds++;
@@ -270,27 +279,48 @@ async function loadActivityDetails(activity, allActivities) {
         `;
 
         try {
-            const res = await fetch(`/api/activities/${activity.activityId}/analysis`);
+            const url = `/api/activities/${activity.activityId}/analysis${regenerate ? '?regenerate=true' : ''}`;
+            const res = await fetch(url);
             const data = await res.json();
             clearInterval(timerId);
 
             if (res.ok && data.analysis) {
-                // simple markdown fallback to HTML
-                let html = data.analysis;
-                html = html.replace(/\n\n/g, '<br><br>');
-                html = html.replace(/\n/g, '<br/>');
-                html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-                html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
-                html = html.replace(/#(.*?)(<br\/>|$)/g, '<h4><strong>$1</strong></h4>'); // poor man's heading parsing
-                aiContent.innerHTML = `<div style="line-height: 1.6; font-size: 0.95rem; background: white; padding: 15px; border-radius: 8px; border: 1px solid #e2e8f0; color: #334155;">${html}</div>`;
+                const html = renderAnalysisHtml(data.analysis);
+                const cachedBadge = data.cached
+                    ? `<span style="font-size:0.75rem; background:#e0f2fe; color:#0369a1; padding:2px 8px; border-radius:10px; margin-left:8px;">✅ 保存済み</span>`
+                    : `<span style="font-size:0.75rem; background:#f0fdf4; color:#166534; padding:2px 8px; border-radius:10px; margin-left:8px;">✨ 新規生成</span>`;
+                aiContent.innerHTML = `
+                    <div style="display:flex; align-items:center; margin-bottom:10px; gap:8px;">
+                        ${cachedBadge}
+                        <button id="btn-regenerate-ai" style="margin-left:auto; background:#8b5cf6; color:white; border:none; padding:5px 12px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">🔄 再生成</button>
+                    </div>
+                    <div style="line-height:1.6; font-size:0.95rem; background:white; padding:15px; border-radius:8px; border:1px solid #e2e8f0; color:#334155;">${html}</div>
+                `;
+                document.getElementById('btn-regenerate-ai').addEventListener('click', () => runAnalysis(true));
             } else {
                 aiContent.innerHTML = `<p style="color: red;">Error generating analysis: ${data.detail || 'Unknown error'}</p>`;
             }
         } catch (e) {
             clearInterval(timerId);
-            aiContent.innerHTML = `<p style="color: red;">Error generating analysis: ${e.message}</p>`;
+            aiContent.innerHTML = `<p style="color: red;">Error: ${e.message}</p>`;
         }
-    });
+    }
+
+    // Check if cached analysis exists on the activity object
+    if (activity.aiAnalysis) {
+        const html = renderAnalysisHtml(activity.aiAnalysis);
+        aiContent.innerHTML = `
+            <div style="display:flex; align-items:center; margin-bottom:10px; gap:8px;">
+                <span style="font-size:0.75rem; background:#e0f2fe; color:#0369a1; padding:2px 8px; border-radius:10px;">✅ 保存済み</span>
+                <button id="btn-regenerate-ai" style="margin-left:auto; background:#8b5cf6; color:white; border:none; padding:5px 12px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">🔄 再生成</button>
+            </div>
+            <div style="line-height:1.6; font-size:0.95rem; background:white; padding:15px; border-radius:8px; border:1px solid #e2e8f0; color:#334155;">${html}</div>
+        `;
+        document.getElementById('btn-regenerate-ai').addEventListener('click', () => runAnalysis(true));
+    } else {
+        aiContent.innerHTML = `<button id="btn-generate-ai" class="btn" style="background:#8b5cf6; color:white; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; font-weight:600;">Generate AI Analysis</button>`;
+        document.getElementById('btn-generate-ai').addEventListener('click', () => runAnalysis(false));
+    }
 
     // Update Metrics
     document.getElementById('val-distance').textContent = (activity.distance / 1000).toFixed(2) + ' km';
