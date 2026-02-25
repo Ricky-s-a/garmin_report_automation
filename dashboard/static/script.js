@@ -121,54 +121,7 @@ function renderSidebar(activities) {
     });
 }
 
-// Sub-3 and Coach Insights Logic
-function calculateInsights(activity, allActivities) {
-    // 1. Sub-3 Marathon Analysis
-    // Sub 3 pace is ~4:15 min/km (approx 3.92 m/s)
-    const targetSpeedMs = 3.92;
-    const currentSpeed = activity.averageSpeed || 0;
-    const currentPaceStr = speedToPace(currentSpeed);
 
-    const sub3MsgEl = document.getElementById('intel-sub3-msg');
-    const sub3StatEl = document.getElementById('intel-sub3-stat');
-
-    if (currentSpeed >= targetSpeedMs) {
-        sub3MsgEl.textContent = "Excellent! You are running faster than Sub-3 target pace. Make sure your HR stays below Lactate Threshold (LT ~161bpm) at this pace to build fatigue resistance.";
-        sub3StatEl.textContent = `Pace: ${currentPaceStr} (Target: < 4'15"/km) - On Track 🔥`;
-        sub3StatEl.style.color = 'var(--color-success)';
-    } else {
-        const diff = (targetSpeedMs - currentSpeed).toFixed(2);
-        sub3MsgEl.textContent = "To reach Sub-3, focus on improving your Lactate Threshold. Introduce 1-2 interval/tempo sessions (e.g. 1km repeats at 4'00\"/km) per week while keeping easy runs deeply aerobic.";
-        sub3StatEl.textContent = `Pace: ${currentPaceStr} (Target: ~4'15"/km)`;
-        sub3StatEl.style.color = 'var(--color-text)';
-    }
-
-    // 2. Injury Prevention (Cadence / Stride)
-    const avgCadence = activity.averageRunningCadenceInStepsPerMinute || (activity.averageRunningCadenceInStepsPerMinute * 2) || 0; // sometimes half
-    let actualCadence = avgCadence > 100 ? avgCadence : avgCadence * 2;
-    const injuryMsgEl = document.getElementById('intel-injury-msg');
-
-    if (actualCadence > 0 && actualCadence < 165) {
-        injuryMsgEl.innerHTML = `Your cadence is <strong>${actualCadence} spm</strong>. Overstriding detected! Low cadence increases impact forces on your knees and hips. Try taking shorter, quicker steps to reach 170-180 spm.`;
-    } else if (actualCadence >= 165) {
-        injuryMsgEl.innerHTML = `Optimal cadence detected (<strong>${actualCadence} spm</strong>). This reduces ground contact time and lower leg stress. Keep it up to prevent injuries!`;
-    } else {
-        injuryMsgEl.innerHTML = "Not enough cadence data to analyze impact risk. Ensure your watch is snug on your wrist or use a chest strap.";
-    }
-
-    // 3. Fatigue & Recovery (Training Effect / HR)
-    const teAerobic = parseFloat(activity.aerobicTrainingEffect) || 0;
-    const teAnaerobic = parseFloat(activity.anaerobicTrainingEffect) || 0;
-    const recoveryMsgEl = document.getElementById('intel-recovery-msg');
-
-    if (teAerobic > 4.0 || teAnaerobic > 3.0) {
-        recoveryMsgEl.innerHTML = `⚠️ <strong>High Load Alert:</strong> Aerobic TE ${teAerobic}, Anaerobic ${teAnaerobic}. This was a highly demanding session. Ensure 48 hours to recover or do very light cross-training. Check HRV morning readiness.`;
-    } else if (teAerobic >= 2.0 && teAerobic <= 3.9) {
-        recoveryMsgEl.innerHTML = `✅ <strong>Base Maintenance:</strong> Good aerobic stimulus (TE ${teAerobic}). You are actively building your "Antifragile Engine" without causing excessive metabolic fatigue.`;
-    } else {
-        recoveryMsgEl.innerHTML = `🔋 <strong>Active Recovery:</strong> Minimal strain. Good for flushing legs or tapering. Keep sleep quality high to absorb recent training.`;
-    }
-}
 
 // Load Selected View
 async function loadActivityDetails(activity, allActivities) {
@@ -189,8 +142,51 @@ async function loadActivityDetails(activity, allActivities) {
         notesSection.classList.add('hidden');
     }
 
-    // Provide Coach Insights
-    calculateInsights(activity, allActivities);
+
+
+    // Setup AI Analysis Button
+    const aiContent = document.getElementById('ai-analysis-content');
+    aiContent.innerHTML = `<button id="btn-generate-ai" class="btn" style="background: #8b5cf6; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: 600;">Generate AI Analysis</button>`;
+
+    document.getElementById('btn-generate-ai').addEventListener('click', async () => {
+        let seconds = 0;
+        const timerId = setInterval(() => {
+            seconds++;
+            const timerSpan = document.getElementById('ai-timer');
+            if (timerSpan) timerSpan.textContent = seconds;
+        }, 1000);
+
+        aiContent.innerHTML = `
+            <div class="ai-loader-container">
+                <div class="ai-spinner"></div>
+                <div class="ai-loader-text">
+                    Analyzing data using Google Gemini... (<span id="ai-timer">0</span>s elapsed)
+                </div>
+            </div>
+        `;
+
+        try {
+            const res = await fetch(`/api/activities/${activity.activityId}/analysis`);
+            const data = await res.json();
+            clearInterval(timerId);
+
+            if (res.ok && data.analysis) {
+                // simple markdown fallback to HTML
+                let html = data.analysis;
+                html = html.replace(/\n\n/g, '<br><br>');
+                html = html.replace(/\n/g, '<br/>');
+                html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+                html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
+                html = html.replace(/#(.*?)(<br\/>|$)/g, '<h4><strong>$1</strong></h4>'); // poor man's heading parsing
+                aiContent.innerHTML = `<div style="line-height: 1.6; font-size: 0.95rem; background: white; padding: 15px; border-radius: 8px; border: 1px solid #e2e8f0; color: #334155;">${html}</div>`;
+            } else {
+                aiContent.innerHTML = `<p style="color: red;">Error generating analysis: ${data.detail || 'Unknown error'}</p>`;
+            }
+        } catch (e) {
+            clearInterval(timerId);
+            aiContent.innerHTML = `<p style="color: red;">Error generating analysis: ${e.message}</p>`;
+        }
+    });
 
     // Update Metrics
     document.getElementById('val-distance').textContent = (activity.distance / 1000).toFixed(2) + ' km';

@@ -12,7 +12,7 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
         integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
     <!-- Custom Styles -->
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style.css?v=2">
 </head>
 
 <body>
@@ -54,20 +54,17 @@
                     <p id="run-notes"></p>
                 </div>
 
-                <!-- Intelligence Panel -->
-                <div class="intelligence-panel">
-                    <div class="intel-card sub3">
-                        <h3>🏃 Sub-3 Analysis</h3>
-                        <p id="intel-sub3-msg">Analyzing pace and HR efficiency...</p>
-                        <div class="intel-stat" id="intel-sub3-stat">Req Pace: 4'15"/km</div>
-                    </div>
-                    <div class="intel-card injury">
-                        <h3>⚠️ Injury Prevention</h3>
-                        <p id="intel-injury-msg">Analyzing cadence, vertical oscillation, and load...</p>
-                    </div>
-                    <div class="intel-card recovery">
-                        <h3>🔋 Fatigue & Recovery</h3>
-                        <p id="intel-recovery-msg">Evaluating Aerobic/Anaerobic training effect...</p>
+
+
+                <!-- AI Coach Analysis -->
+                <div class="card ai-analysis-card"
+                    style="margin-bottom: 24px; background: #f8fafc; border-left: 4px solid #8b5cf6;">
+                    <h3>🧠 AI Coach Analysis (<span style="font-size: 0.8em; font-weight:normal;">Uphill Athlete &
+                            Daniels</span>)</h3>
+                    <div id="ai-analysis-content" style="padding: 10px 0;">
+                        <button id="btn-generate-ai" class="btn"
+                            style="background: #8b5cf6; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: 600;">Generate
+                            AI Analysis</button>
                     </div>
                 </div>
 
@@ -167,7 +164,7 @@
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
-    <script src="/static/script.js"></script>
+    <script src="/static/script.js?v=2"></script>
 </body>
 
 </html>
