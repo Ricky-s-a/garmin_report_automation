@@ -10,6 +10,10 @@ from google import genai
 from google.genai import types
 from dotenv import load_dotenv
 
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+from src.garmin import fetch_garmin_data
+
 load_dotenv()
 
 app = FastAPI(title="Garmin Dashboard API")
@@ -24,6 +28,14 @@ app.mount("/static", StaticFiles(directory="dashboard/static"), name="static")
 async def serve_index():
     with open("dashboard/static/index.html", "r", encoding="utf-8") as f:
         return f.read()
+
+@app.post("/api/sync")
+def sync_data():
+    try:
+        activities = fetch_garmin_data()
+        return {"status": "success", "fetched": len(activities)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/activities")
 def get_activities():

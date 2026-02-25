@@ -22,6 +22,11 @@
             <div class="sidebar-header">
                 <h1>Coach Pro</h1>
                 <p>Advanced Running Analytics</p>
+                <button id="btn-sync" class="btn"
+                    style="width: 100%; margin: 10px 0; background: #0ea5e9; color: white; border: none; padding: 8px; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px;">🔄
+                    Sync with Garmin</button>
+                <div id="sync-status" style="font-size: 0.8rem; color: #64748b; margin-bottom: 10px; display: none;">
+                    Syncing...</div>
                 <div class="search-box">
                     <input type="text" id="search-input" placeholder="Search runs or notes...">
                 </div>
@@ -222,9 +227,20 @@
                 </div>
 
                 <div class="card chart-card">
-                    <h3>Your Base Trail Stats (From Garmin Data)</h3>
+                    <div
+                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                        <h3 style="margin: 0;">Your Base Trail Stats (From Garmin Data)</h3>
+                        <div style="display: flex; gap: 12px; align-items: center;">
+                            <label style="font-size: 0.85rem; color: #64748b;">Min D+ (m/km):</label>
+                            <input type="number" id="trail-filter-elev" value="30"
+                                style="width: 60px; padding: 4px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 0.9rem;">
+                            <label style="font-size: 0.85rem; color: #64748b;">Max Pace (min/km):</label>
+                            <input type="number" id="trail-filter-pace" value="20"
+                                style="width: 60px; padding: 4px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 0.9rem;">
+                        </div>
+                    </div>
                     <div style="margin-top: 10px; font-size: 0.95rem; line-height: 1.8; color: #475569;">
-                        <p>Total Known Trail Runs Detected (D+ > 30m/km): <strong id="trail-base-count"
+                        <p>Total Known Trail Runs Detected: <strong id="trail-base-count"
                                 style="color: #0ea5e9;">0</strong></p>
                         <p>Regression Model: <strong id="trail-regression-formula" style="color: #0f172a;">Pace (s/km) =
                                 a * D+ (m/km) + b</strong></p>
@@ -250,7 +266,7 @@
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
-    <script src="/static/script.js?v=5"></script>
+    <script src="/static/script.js?v=8"></script>
 </body>
 
 </html>

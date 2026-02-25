@@ -66,6 +66,55 @@ function setupNavigation() {
             renderSidebar(filtered);
         });
     }
+
+    const btnSync = document.getElementById('btn-sync');
+    const syncStatus = document.getElementById('sync-status');
+    let syncInterval;
+
+    if (btnSync) {
+        btnSync.addEventListener('click', async () => {
+            btnSync.disabled = true;
+            syncStatus.style.display = 'block';
+            syncStatus.style.color = '#64748b';
+            syncStatus.textContent = '';
+
+            // show spinner
+            btnSync.innerHTML = `<span class="ai-spinner" style="border-color: rgba(255,255,255,0.3); border-top-color: white;"></span> Syncing... <span id="sync-timer">0.0s</span>`;
+
+            const startTime = Date.now();
+            syncInterval = setInterval(() => {
+                const elapsed = (Date.now() - startTime) / 1000;
+                const timerEl = document.getElementById('sync-timer');
+                if (timerEl) {
+                    timerEl.textContent = elapsed.toFixed(1) + 's';
+                }
+            }, 100);
+
+            try {
+                const response = await fetch('/api/sync', { method: 'POST' });
+                const data = await response.json();
+
+                if (response.ok) {
+                    syncStatus.style.color = '#10b981';
+                    syncStatus.textContent = `Success! Fetched ${data.fetched} new activities.`;
+                    await fetchActivities(); // Reload list
+                } else {
+                    syncStatus.style.color = '#ef4444';
+                    syncStatus.textContent = `Error: ${data.detail || 'Failed to sync'}`;
+                }
+            } catch (e) {
+                syncStatus.style.color = '#ef4444';
+                syncStatus.textContent = `Error: ${e.message}`;
+            } finally {
+                clearInterval(syncInterval);
+                btnSync.innerHTML = `🔄 Sync with Garmin`;
+                btnSync.disabled = false;
+                setTimeout(() => {
+                    syncStatus.style.display = 'none';
+                }, 5000); // Hide after 5 seconds
+            }
+        });
+    }
 }
 
 // Utility to format seconds into MM:SS
@@ -610,12 +659,18 @@ document.getElementById('trail-presets').addEventListener('change', (e) => {
     }
 });
 
+document.getElementById('trail-filter-elev')?.addEventListener('change', renderTrailCalculator);
+document.getElementById('trail-filter-pace')?.addEventListener('change', renderTrailCalculator);
+
 function renderTrailCalculator() {
     if (!globalActivities || globalActivities.length === 0) return;
 
     trailDataPoints = [];
 
-    // Detect trail runs: Elevation >= 30m per 1km AND distance > 1km
+    const minElev = parseFloat(document.getElementById('trail-filter-elev')?.value || 30);
+    const maxPaceMinKm = parseFloat(document.getElementById('trail-filter-pace')?.value || 20);
+
+    // Detect trail runs: Elevation >= minElev per 1km AND distance > 1km
     const trailRuns = globalActivities.filter(act => {
         const distKm = (act.distance || 0) / 1000;
         const elevM = act.elevationGain || 0;
@@ -623,9 +678,12 @@ function renderTrailCalculator() {
 
         const nameLower = (act.activityName || '').toLowerCase();
         const isTrailName = nameLower.includes('トレラン') || nameLower.includes('trail') || nameLower.includes('トレイル');
-        const isHilly = (elevM / distKm) >= 30;
+        const isHilly = (elevM / distKm) >= minElev;
 
-        if (isTrailName || isHilly) {
+        const paceSecKm = act.duration / distKm;
+        const paceMinKm = paceSecKm / 60;
+
+        if (paceMinKm <= maxPaceMinKm && (isTrailName || isHilly)) {
             // Plot x = Elev/Km, y = pace in sec/km
             const x = elevM / distKm;
             const paceSecKm = act.duration / distKm;
