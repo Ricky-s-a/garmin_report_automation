@@ -1,6 +1,6 @@
 garminconnect
-# google-genai  # Reserved for future Gemini integration
-# pydantic
+google-genai
+pydantic
 # google-api-python-client  # Reserved for future Calendar integration
 # google-auth
 # google-auth-httplib2
