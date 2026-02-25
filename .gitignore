@@ -8,6 +8,7 @@ __pycache__/
 
 # Output
 report_output.md
+./data/
 
 # Virtual environments
 venv/

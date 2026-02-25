@@ -134,7 +134,10 @@ def fetch_garmin_data() -> list:
     
     keys_to_save = [
         "activityId", "activityName", "startTimeLocal", "distance", 
-        "duration", "averageSpeed", "averageHR", "maxHR", "elevationGain"
+        "duration", "averageSpeed", "averageHR", "maxHR", "elevationGain",
+        "description", "vO2MaxValue", "averageRunningCadenceInStepsPerMinute", 
+        "avgStrideLength", "avgVerticalOscillation", "avgGroundContactTime", 
+        "aerobicTrainingEffect", "anaerobicTrainingEffect"
     ]
     
     new_records = 0
