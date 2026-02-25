@@ -15,10 +15,14 @@ function setupNavigation() {
     const btnSingle = document.getElementById('btn-single');
     const btnTrends = document.getElementById('btn-trends');
 
+    const btnTrail = document.getElementById('btn-trail');
+
     btnSingle.addEventListener('click', () => {
         btnSingle.classList.add('active');
         btnTrends.classList.remove('active');
+        btnTrail.classList.remove('active');
         document.getElementById('trends-view').classList.add('hidden');
+        document.getElementById('trail-view').classList.add('hidden');
         if (document.querySelectorAll('.activity-item.active').length > 0) {
             document.getElementById('dashboard-view').classList.remove('hidden');
             document.getElementById('welcome-message').classList.add('hidden');
@@ -31,10 +35,23 @@ function setupNavigation() {
     btnTrends.addEventListener('click', () => {
         btnTrends.classList.add('active');
         btnSingle.classList.remove('active');
+        btnTrail.classList.remove('active');
         document.getElementById('welcome-message').classList.add('hidden');
         document.getElementById('dashboard-view').classList.add('hidden');
+        document.getElementById('trail-view').classList.add('hidden');
         document.getElementById('trends-view').classList.remove('hidden');
         renderTrends('weekly');
+    });
+
+    btnTrail.addEventListener('click', () => {
+        btnTrail.classList.add('active');
+        btnSingle.classList.remove('active');
+        btnTrends.classList.remove('active');
+        document.getElementById('welcome-message').classList.add('hidden');
+        document.getElementById('dashboard-view').classList.add('hidden');
+        document.getElementById('trends-view').classList.add('hidden');
+        document.getElementById('trail-view').classList.remove('hidden');
+        renderTrailCalculator();
     });
 
     const searchInput = document.getElementById('search-input');
@@ -562,6 +579,228 @@ function renderTrends(period) {
                         label: function (context) {
                             if (context.datasetIndex === 0) return `Avg Cadence: ${context.parsed.y} spm`;
                             if (context.datasetIndex === 1) return `Avg Stride: ${context.parsed.y} m`;
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+// ============== Trail Pace Calculator ============== //
+let trailRegressionModel = { a: 0, b: 0 }; // Pace = a * Elev/km + b
+let trailDataPoints = [];
+let trailChartInstance = null;
+
+const trailPresets = {
+    "kumotori": { name: "雲取山", dist: 20, elev: 1400 },
+    "hirubiston": { name: "ヒルビストン", dist: 25, elev: 2469 },
+    "tanzawa": { name: "丹沢ケルベロス", dist: 30, elev: 2500 },
+    "takao": { name: "高尾マンモス", dist: 35, elev: 2000 },
+    "tarasaru": { name: "トラサル", dist: 40, elev: 2800 },
+    "gaireen": { name: "ガイリーン", dist: 50, elev: 3000 },
+    "mtfuji": { name: "Mt.Fuji Kai", dist: 70, elev: 3400 }
+};
+
+document.getElementById('trail-presets').addEventListener('change', (e) => {
+    const val = e.target.value;
+    if (val && trailPresets[val]) {
+        document.getElementById('trail-target-dist').value = trailPresets[val].dist;
+        document.getElementById('trail-target-elev').value = trailPresets[val].elev;
+    }
+});
+
+function renderTrailCalculator() {
+    if (!globalActivities || globalActivities.length === 0) return;
+
+    trailDataPoints = [];
+
+    // Detect trail runs: Elevation >= 30m per 1km AND distance > 1km
+    const trailRuns = globalActivities.filter(act => {
+        const distKm = (act.distance || 0) / 1000;
+        const elevM = act.elevationGain || 0;
+        if (distKm < 1 || !act.duration) return false;
+
+        const nameLower = (act.activityName || '').toLowerCase();
+        const isTrailName = nameLower.includes('トレラン') || nameLower.includes('trail') || nameLower.includes('トレイル');
+        const isHilly = (elevM / distKm) >= 30;
+
+        if (isTrailName || isHilly) {
+            // Plot x = Elev/Km, y = pace in sec/km
+            const x = elevM / distKm;
+            const paceSecKm = act.duration / distKm;
+            trailDataPoints.push({
+                x: x,
+                y: paceSecKm,
+                name: act.activityName || `Run (${distKm.toFixed(1)}k)`,
+                dist: distKm,
+                duration: act.duration
+            });
+            return true;
+        }
+        return false;
+    });
+
+    document.getElementById('trail-base-count').textContent = trailRuns.length;
+
+    // Calculate Linear Regression: y = ax + b
+    if (trailDataPoints.length > 1) {
+        let n = trailDataPoints.length;
+        let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+        trailDataPoints.forEach(p => {
+            sumX += p.x;
+            sumY += p.y;
+            sumXY += (p.x * p.y);
+            sumXX += (p.x * p.x);
+        });
+
+        const meanX = sumX / n;
+        const meanY = sumY / n;
+
+        const numerator = sumXY - n * meanX * meanY;
+        const denominator = sumXX - n * meanX * meanX;
+
+        if (denominator !== 0) {
+            const a = numerator / denominator;
+            const b = meanY - a * meanX;
+            trailRegressionModel.a = a;
+            trailRegressionModel.b = b;
+        } else {
+            // fallback
+            trailRegressionModel.a = 0;
+            trailRegressionModel.b = meanY;
+        }
+        document.getElementById('trail-regression-formula').textContent = `Pace (s/km) = ${trailRegressionModel.a.toFixed(2)} * 上昇高度(m/km) + ${trailRegressionModel.b.toFixed(2)}`;
+    } else {
+        document.getElementById('trail-regression-formula').textContent = 'Not enough data points';
+    }
+
+    calculateTrailTime();
+}
+
+document.getElementById('btn-calc-trail').addEventListener('click', calculateTrailTime);
+
+function calculateTrailTime() {
+    const targetDistKm = parseFloat(document.getElementById('trail-target-dist').value || 0);
+    const targetElevM = parseFloat(document.getElementById('trail-target-elev').value || 0);
+
+    const effortDistKm = targetDistKm + (targetElevM / 100);
+    document.getElementById('trail-effort-dist').textContent = effortDistKm.toFixed(1) + ' km';
+
+    if (trailRegressionModel.a === 0 && trailRegressionModel.b === 0) return;
+    if (targetDistKm <= 0) return;
+
+    // x = predicted Elev/km
+    const targetX = targetElevM / targetDistKm;
+
+    // y = predicted pace (sec/km)
+    const predPaceSec = trailRegressionModel.a * targetX + trailRegressionModel.b;
+
+    // total pred time in sec
+    const predDurationS = predPaceSec * targetDistKm;
+
+    // HH:MM:SS
+    const h = Math.floor(predDurationS / 3600);
+    const m = Math.floor((predDurationS % 3600) / 60);
+    const s = Math.floor(predDurationS % 60);
+    const hStr = h.toString().padStart(2, '0');
+    const mStr = m.toString().padStart(2, '0');
+    const sStr = s.toString().padStart(2, '0');
+    document.getElementById('trail-pred-time').textContent = `${hStr}:${mStr}:${sStr}`;
+
+    // predicted actual avg pace
+    const actualPaceMs = (targetDistKm * 1000) / predDurationS;
+    document.getElementById('trail-pred-pace').textContent = speedToPace(actualPaceMs);
+
+    drawTrailChart(targetX, predPaceSec, document.getElementById('trail-target-dist').value, document.getElementById('trail-presets').options[document.getElementById('trail-presets').selectedIndex].text);
+}
+
+function drawTrailChart(targetX, predPaceSec, targetDist, raceName) {
+    const ctx = document.getElementById('trailPredictionChart').getContext('2d');
+    if (trailChartInstance) trailChartInstance.destroy();
+
+    // Line data
+    let minX = Math.min(...trailDataPoints.map(p => p.x));
+    let maxX = Math.max(...trailDataPoints.map(p => p.x), targetX);
+    // Add some padding
+    minX = Math.max(0, minX - 10);
+    maxX = maxX + 10;
+
+    const linePoints = [
+        { x: minX, y: trailRegressionModel.a * minX + trailRegressionModel.b },
+        { x: maxX, y: trailRegressionModel.a * maxX + trailRegressionModel.b }
+    ];
+
+    const scatterData = trailDataPoints.map(p => ({ x: p.x, y: p.y, name: p.name, dist: p.dist }));
+
+    // Format Y axis (sec to HH:MM:SS for tooltip and labels)
+    const formatY = (val) => {
+        const h = Math.floor(val / 3600);
+        const m = Math.floor((val % 3600) / 60);
+        const s = Math.floor(val % 60);
+        return h > 0 ? `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}` : `${m}:${s.toString().padStart(2, '0')}`;
+    };
+
+    let predictedLabel = "Prediction";
+    if (raceName && raceName !== "-- 手動で入力 --") {
+        predictedLabel = raceName;
+    }
+
+    trailChartInstance = new Chart(ctx, {
+        type: 'scatter',
+        data: {
+            datasets: [
+                {
+                    label: '過去のトレラン実測値',
+                    data: scatterData,
+                    backgroundColor: '#0284c7',
+                    pointRadius: 6,
+                    pointHoverRadius: 8
+                },
+                {
+                    label: predictedLabel,
+                    data: [{ x: targetX, y: predPaceSec, name: predictedLabel, dist: targetDist }],
+                    backgroundColor: '#ef4444',
+                    pointStyle: 'rectRot',
+                    pointRadius: 10,
+                    pointHoverRadius: 12
+                },
+                {
+                    label: '予測モデル (回帰直線)',
+                    data: linePoints,
+                    type: 'line',
+                    borderColor: '#94a3b8',
+                    borderDash: [5, 5],
+                    fill: false,
+                    pointRadius: 0,
+                    tension: 0
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            color: '#475569',
+            scales: {
+                x: {
+                    title: { display: true, text: '上昇高度 (m/km)' },
+                    grid: { color: 'rgba(0,0,0,0.05)' }
+                },
+                y: {
+                    title: { display: true, text: 'ペース (hh:mm:ss / km)' },
+                    ticks: {
+                        callback: function (value) { return formatY(value); }
+                    },
+                    grid: { color: 'rgba(0,0,0,0.05)' }
+                }
+            },
+            plugins: {
+                tooltip: {
+                    callbacks: {
+                        label: function (context) {
+                            if (context.datasetIndex === 2) return null; // no tooltip for line
+                            const p = context.raw;
+                            return `${p.name} | D+: ${p.x.toFixed(1)}m/km | Pace: ${formatY(p.y)}/km`;
                         }
                     }
                 }
