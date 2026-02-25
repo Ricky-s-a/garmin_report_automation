@@ -188,7 +188,11 @@ def get_activity_analysis(activity_id: str, regenerate: bool = False):
     anaerobic_te = activity.get('anaerobicTrainingEffect')
     te_str = f"有酸素 {aerobic_te} / 無酸素 {anaerobic_te}" if (aerobic_te or anaerobic_te) else "データなし"
     
+    description = activity.get('description', '')
+    notes_str = f"\n【ランナー自身のメモ・感想】\n{description.strip()}" if description and description.strip() else ""
+    
     user_content = f"""本日のランニングデータ:
+名前: {activity.get('activityName', 'Running')}
 距離: {dist_km:.2f} km
 時間: {m}分{s}秒
 平均ペース: {pace_str}
@@ -202,6 +206,7 @@ def get_activity_analysis(activity_id: str, regenerate: bool = False):
 上下動: {vert_osc_str}
 接地時間: {gct_str}
 トレーニング効果 (TE): {te_str}
+{notes_str}
 
 {gpx_summary}
 
@@ -212,6 +217,7 @@ def get_activity_analysis(activity_id: str, regenerate: bool = False):
 1. 目的に合致しているか: 心拍数やペースから、ベース構築（AeT以下）の範囲に収まっているか、または意図した強度のトレーニングになっているか。
 2. ペース配分と心拍の推移: 詳細推移データから、後半タレていないか、上りで心拍を使いすぎていないか。
 3. ランニングフォーム: ピッチ、ストライド、上下動、接地時間の各指標から、地形に適したまたは無駄のないエコノミーな走りができているか。
+4. ランナーのメモ（あれば）: ランナー自身の感想や主観的な情報と、客観データが一致しているか、またはどんな追加的なコンテキストが得られるか。
 """
 
     api_key = os.environ.get("GEMINI_API_KEY")
