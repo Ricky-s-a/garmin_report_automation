@@ -695,7 +695,11 @@ document.getElementById('trail-presets').addEventListener('change', (e) => {
         document.getElementById('trail-target-dist').value = trailPresets[val].dist;
         document.getElementById('trail-target-elev').value = trailPresets[val].elev;
     }
+    calculateTrailTime();
 });
+
+document.getElementById('trail-target-dist')?.addEventListener('input', calculateTrailTime);
+document.getElementById('trail-target-elev')?.addEventListener('input', calculateTrailTime);
 
 document.getElementById('trail-filter-elev')?.addEventListener('change', renderTrailCalculator);
 document.getElementById('trail-filter-pace')?.addEventListener('change', renderTrailCalculator);
