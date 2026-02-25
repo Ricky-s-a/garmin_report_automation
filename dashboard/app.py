@@ -131,21 +131,24 @@ def get_activity_analysis(activity_id: str):
             gpx_filtered['cadence'] = pd.to_numeric(gpx_filtered['cadence'], errors='coerce').fillna(0)
             
             # Split the data into 10 temporal buckets
-            chunks = np.array_split(gpx_filtered, min(10, len(gpx_filtered)))
+            chunks = np.array_split(gpx_filtered, min(10, max(1, len(gpx_filtered))))
             trend_lines = []
             for i, chunk in enumerate(chunks):
+                if chunk.empty: continue
                 avg_hr = chunk['heartRate'].mean()
+                std_hr = chunk['heartRate'].std()
                 avg_cad = chunk['cadence'].mean()
                 avg_ele = chunk['elevation'].mean()
+                ele_diff = chunk['elevation'].iloc[-1] - chunk['elevation'].iloc[0]
                 
-                hr_str = f"{avg_hr:.0f}bpm" if not np.isnan(avg_hr) else "--"
-                cad_str = f"{avg_cad:.0f}spm" if not np.isnan(avg_cad) else "--"
-                ele_str = f"{avg_ele:.0f}m" if not np.isnan(avg_ele) else "--"
+                hr_str = f"{avg_hr:.0f}bpm(σ{std_hr:.1f})" if pd.notna(avg_hr) else "--"
+                cad_str = f"{avg_cad:.0f}spm" if pd.notna(avg_cad) else "--"
+                ele_str = f"平{avg_ele:.0f}m(Δ{ele_diff:+.0f}m)" if pd.notna(avg_ele) else "--"
                 
-                trend_lines.append(f" - [%{i*10} ~ %{(i+1)*10}区間] 心拍: {hr_str}, 標高: {ele_str}, ピッチ: {cad_str}")
+                trend_lines.append(f" - [{i*10}%~{(i+1)*10}%区間] 心拍:{hr_str}, ピッチ:{cad_str}, 標高:{ele_str}")
             
             if trend_lines:
-                gpx_summary = "詳細推移データ(Run全体を10分割したときの平均遷移):\n" + "\n".join(trend_lines)
+                gpx_summary = "【GPX 10分割推移データ (平均値と標準偏差σ、区間内標高変化Δ)】\n" + "\n".join(trend_lines)
     except Exception as e:
         print(f"GPX parsing error: {e}")
 
