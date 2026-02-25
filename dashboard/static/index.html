@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Garmin Coach Pro Dashboard</title>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
+        rel="stylesheet">
+    <!-- Leaflet CSS for Maps -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+    <!-- Custom Styles -->
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+
+<body>
+    <div class="container">
+        <!-- Sidebar: List of Activities -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <h1>Coach Pro</h1>
+                <p>Advanced Running Analytics</p>
+                <div class="search-box">
+                    <input type="text" id="search-input" placeholder="Search runs or notes...">
+                </div>
+            </div>
+            <div class="activities-list" id="activities-list">
+                <div class="loader">Loading...</div>
+            </div>
+        </aside>
+
+        <!-- Main Content: Dashboard Metrics & Charts -->
+        <main class="main-content">
+            <!-- Top Navigation -->
+            <div class="top-nav">
+                <button id="btn-single" class="nav-btn active">Single Run View</button>
+                <button id="btn-trends" class="nav-btn">Long-Term Trends</button>
+            </div>
+            <div id="welcome-message" class="welcome-message">
+                <h2>Select a run from the sidebar to view advanced insights.</h2>
+            </div>
+
+            <div id="dashboard-view" class="dashboard-view hidden">
+                <header class="run-header">
+                    <h2 id="run-title">Run Title</h2>
+                    <p id="run-date">Date & Time</p>
+                </header>
+
+                <!-- Personal Notes -->
+                <div id="notes-section" class="notes-section hidden">
+                    <h4>Personal Notes</h4>
+                    <p id="run-notes"></p>
+                </div>
+
+                <!-- Intelligence Panel -->
+                <div class="intelligence-panel">
+                    <div class="intel-card sub3">
+                        <h3>🏃 Sub-3 Analysis</h3>
+                        <p id="intel-sub3-msg">Analyzing pace and HR efficiency...</p>
+                        <div class="intel-stat" id="intel-sub3-stat">Req Pace: 4'15"/km</div>
+                    </div>
+                    <div class="intel-card injury">
+                        <h3>⚠️ Injury Prevention</h3>
+                        <p id="intel-injury-msg">Analyzing cadence, vertical oscillation, and load...</p>
+                    </div>
+                    <div class="intel-card recovery">
+                        <h3>🔋 Fatigue & Recovery</h3>
+                        <p id="intel-recovery-msg">Evaluating Aerobic/Anaerobic training effect...</p>
+                    </div>
+                </div>
+
+                <div class="metrics-grid">
+                    <div class="metric-card">
+                        <span class="label">Distance</span>
+                        <span class="value" id="val-distance">--</span>
+                    </div>
+                    <div class="metric-card">
+                        <span class="label">Pace</span>
+                        <span class="value" id="val-pace">--</span>
+                    </div>
+                    <div class="metric-card">
+                        <span class="label">Time</span>
+                        <span class="value" id="val-time">--</span>
+                    </div>
+                    <div class="metric-card">
+                        <span class="label">Avg HR</span>
+                        <span class="value" id="val-hr">--</span>
+                    </div>
+                </div>
+
+                <div class="content-grid">
+                    <div class="card map-card">
+                        <h3>Route Map</h3>
+                        <div id="map" class="map-container"></div>
+                    </div>
+
+                    <div class="card chart-card">
+                        <h3>Heart Rate & Elevation Profile</h3>
+                        <div class="chart-container">
+                            <canvas id="analysisChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Trends View -->
+            <div id="trends-view" class="dashboard-view hidden">
+                <header class="run-header">
+                    <h2>Long-Term Analytics</h2>
+                    <p>Track your volume and improvements over time</p>
+                </header>
+
+                <div class="nav-pills">
+                    <button id="pill-weekly" class="pill-btn active" onclick="renderTrends('weekly')">Weekly</button>
+                    <button id="pill-monthly" class="pill-btn" onclick="renderTrends('monthly')">Monthly</button>
+                    <button id="pill-yearly" class="pill-btn" onclick="renderTrends('yearly')">Yearly</button>
+                </div>
+
+                <div class="metrics-grid">
+                    <div class="metric-card">
+                        <span class="label">Total Distance</span>
+                        <span class="value" id="trend-dist">0 km</span>
+                    </div>
+                    <div class="metric-card">
+                        <span class="label">Total Activities</span>
+                        <span class="value" id="trend-count">0</span>
+                    </div>
+                    <div class="metric-card">
+                        <span class="label">Avg Cadence</span>
+                        <span class="value" id="trend-cadence">0 spm</span>
+                    </div>
+                    <div class="metric-card">
+                        <span class="label">Avg Stride / Pace</span>
+                        <span class="value" id="trend-pace">--:--</span>
+                    </div>
+                </div>
+
+                <div class="card chart-card" style="margin-bottom: 24px;">
+                    <h3>Volume Over Time (Distance in km)</h3>
+                    <div class="chart-container" style="height: 300px;">
+                        <canvas id="trendChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="card chart-card" style="margin-bottom: 24px;">
+                    <h3>Running Efficiency (Pace & Heart Rate)</h3>
+                    <div class="chart-container" style="height: 300px;">
+                        <canvas id="trendPaceHRChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="card chart-card" style="margin-bottom: 24px;">
+                    <h3>Running Form (Cadence & Stride Length)</h3>
+                    <div class="chart-container" style="height: 300px;">
+                        <canvas id="trendCadenceChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <script src="/static/script.js"></script>
+</body>
+
+</html>

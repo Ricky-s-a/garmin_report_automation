@@ -1,0 +1,16 @@
+# Environments
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Output
+report_output.md
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
