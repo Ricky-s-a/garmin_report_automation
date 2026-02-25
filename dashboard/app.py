@@ -149,20 +149,47 @@ def get_activity_analysis(activity_id: str):
     except Exception as e:
         print(f"GPX parsing error: {e}")
 
+    # Extract new advanced metrics if they exist
+    cadence = activity.get('averageRunningCadenceInStepsPerMinute')
+    cadence_str = f"{int(cadence*2)} spm" if cadence else "データなし"
+    
+    stride = activity.get('avgStrideLength')
+    stride_str = f"{stride} m" if stride else "データなし"
+    
+    vert_osc = activity.get('avgVerticalOscillation')
+    vert_osc_str = f"{vert_osc} cm" if vert_osc else "データなし"
+    
+    gct = activity.get('avgGroundContactTime')
+    gct_str = f"{gct} ms" if gct else "データなし"
+    
+    aerobic_te = activity.get('aerobicTrainingEffect')
+    anaerobic_te = activity.get('anaerobicTrainingEffect')
+    te_str = f"有酸素 {aerobic_te} / 無酸素 {anaerobic_te}" if (aerobic_te or anaerobic_te) else "データなし"
+    
     user_content = f"""本日のランニングデータ:
 距離: {dist_km:.2f} km
 時間: {m}分{s}秒
 平均ペース: {pace_str}
+累積標高: {activity.get('elevationGain', 0)} m
 平均心拍数: {activity.get('averageHR', 'Unknown')} bpm
 最大心拍数: {activity.get('maxHR', 'Unknown')} bpm
-累積標高: {activity.get('elevationGain', 0)} m
-主観的疲労度(RPE): 確認不能 (データなし)
+
+【ランニングダイナミクス・指標】
+ピッチ: {cadence_str}
+歩幅 (ストライド): {stride_str}
+上下動: {vert_osc_str}
+接地時間: {gct_str}
+トレーニング効果 (TE): {te_str}
 
 {gpx_summary}
 
 ユーザーの現状: 最近はベース構築をメインに行っており、将来的にはMt.Fuji Kai 70kのような長距離レースに参加したいと考えている。
 
-上記のデータを評価し、アドバイスをお願いします。特に、区間ごとの心拍や標高の遷移(詳細推移データ)から「後半タレていないか」「上りで心拍を使いすぎていないか」などを分析してください。
+上記のデータを評価し、アドバイスをお願いします。
+特に以下の点を含めた分析をお願いします：
+1. 目的に合致しているか: 心拍数やペースから、ベース構築（AeT以下）の範囲に収まっているか、または意図した強度のトレーニングになっているか。
+2. ペース配分と心拍の推移: 詳細推移データから、後半タレていないか、上りで心拍を使いすぎていないか。
+3. ランニングフォーム: ピッチ、ストライド、上下動、接地時間の各指標から、地形に適したまたは無駄のないエコノミーな走りができているか。
 """
 
     api_key = os.environ.get("GEMINI_API_KEY")
