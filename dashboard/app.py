@@ -129,11 +129,25 @@ def get_activity_analysis(activity_id: str):
             gpx_filtered['elevation'] = pd.to_numeric(gpx_filtered['elevation'], errors='coerce').fillna(0)
             gpx_filtered['heartRate'] = pd.to_numeric(gpx_filtered['heartRate'], errors='coerce').fillna(0)
             gpx_filtered['cadence'] = pd.to_numeric(gpx_filtered['cadence'], errors='coerce').fillna(0)
+            gpx_filtered['lat'] = pd.to_numeric(gpx_filtered.get('latitude', 0), errors='coerce')
+            gpx_filtered['lon'] = pd.to_numeric(gpx_filtered.get('longitude', 0), errors='coerce')
             
-            # Split the data into 10 temporal buckets
-            chunks = np.array_split(gpx_filtered, min(10, max(1, len(gpx_filtered))))
+            # Calculate distance using Haversine formula
+            lat1 = np.radians(gpx_filtered['lat'].shift())
+            lon1 = np.radians(gpx_filtered['lon'].shift())
+            lat2 = np.radians(gpx_filtered['lat'])
+            lon2 = np.radians(gpx_filtered['lon'])
+            dlon = lon2 - lon1
+            dlat = lat2 - lat1
+            a = np.sin(dlat / 2.0)**2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2.0)**2
+            c = 2 * np.arcsin(np.sqrt(a.clip(0, 1))) # clip to handle precision issues
+            km = 6371 * c
+            
+            gpx_filtered['dist_km'] = km.fillna(0).cumsum()
+            gpx_filtered['km_bucket'] = np.floor(gpx_filtered['dist_km']).astype(int)
+            
             trend_lines = []
-            for i, chunk in enumerate(chunks):
+            for k, chunk in gpx_filtered.groupby('km_bucket'):
                 if chunk.empty: continue
                 avg_hr = chunk['heartRate'].mean()
                 std_hr = chunk['heartRate'].std()
@@ -145,10 +159,10 @@ def get_activity_analysis(activity_id: str):
                 cad_str = f"{avg_cad:.0f}spm" if pd.notna(avg_cad) else "--"
                 ele_str = f"平{avg_ele:.0f}m(Δ{ele_diff:+.0f}m)" if pd.notna(avg_ele) else "--"
                 
-                trend_lines.append(f" - [{i*10}%~{(i+1)*10}%区間] 心拍:{hr_str}, ピッチ:{cad_str}, 標高:{ele_str}")
+                trend_lines.append(f" - [{k}km~{k+1}km] 心拍:{hr_str}, ピッチ:{cad_str}, 標高:{ele_str}")
             
             if trend_lines:
-                gpx_summary = "【GPX 10分割推移データ (平均値と標準偏差σ、区間内標高変化Δ)】\n" + "\n".join(trend_lines)
+                gpx_summary = "【GPX 1km毎ラップ推移データ (平均値と標準偏差σ、区間内標高変化Δ)】\n" + "\n".join(trend_lines)
     except Exception as e:
         print(f"GPX parsing error: {e}")
 
