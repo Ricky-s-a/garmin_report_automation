@@ -299,38 +299,17 @@ async function loadActivityDetails(activity, allActivities) {
     document.getElementById('val-hr').textContent = Math.round(activity.averageHR || 0) + ' bpm';
 
     try {
-        // Fetch GPX Data Points for Map and Chart
+        // Fetch GPX Data Points for Chart
         const response = await fetch(`/api/activities/${activity.activityId}/gpx`);
         const points = await response.json();
 
-        updateMap(points);
         updateChart(points);
     } catch (e) {
         console.error("Failed to load GPX data for activity", e);
     }
 }
 
-// Update Map (Leaflet)
-function updateMap(points) {
-    const coords = points.filter(p => p.latitude && p.longitude).map(p => [parseFloat(p.latitude), parseFloat(p.longitude)]);
-
-    if (!map) {
-        map = L.map('map').setView([0, 0], 2);
-        // Bright styling for the map
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> contributors'
-        }).addTo(map);
-    }
-
-    if (polyline) {
-        polyline.remove();
-    }
-
-    if (coords.length > 0) {
-        polyline = L.polyline(coords, { color: '#0284c7', weight: 4, opacity: 0.8 }).addTo(map);
-        map.fitBounds(polyline.getBounds());
-    }
-}
+// Map removed from UI
 
 // Update Chart (Chart.js)
 function updateChart(points) {
