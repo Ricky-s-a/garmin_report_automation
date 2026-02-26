@@ -452,10 +452,12 @@ function renderTrends(period) {
 
         let key = '';
         if (period === 'weekly') {
-            const firstDayOfYear = new Date(d.getFullYear(), 0, 1);
-            const pastDaysOfYear = (d - firstDayOfYear) / 86400000;
-            const weekNum = Math.ceil((pastDaysOfYear + firstDayOfYear.getDay() + 1) / 7);
-            key = `${d.getFullYear()}-W${weekNum.toString().padStart(2, '0')}`;
+            // Use Monday of the week as key (YYYY-MM-DD)
+            const dayOfWeek = d.getDay(); // 0=Sun
+            const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+            const monday = new Date(d);
+            monday.setDate(d.getDate() - daysToMonday);
+            key = `${monday.getFullYear()}-${(monday.getMonth() + 1).toString().padStart(2, '0')}-${monday.getDate().toString().padStart(2, '0')}`;
         } else if (period === 'monthly') {
             key = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}`;
         } else {
@@ -530,6 +532,20 @@ function renderTrends(period) {
     });
 
     const labels = Object.keys(grouped);
+
+    // Human-readable display labels
+    // weekly: "2025-04-07" → "4/7〜"  monthly: "2025-04" → "25/4月"  yearly: as-is
+    const displayLabels = labels.map(k => {
+        if (period === 'weekly') {
+            const parts = k.split('-');
+            return `${parseInt(parts[1])}/${parseInt(parts[2])}〜`;
+        } else if (period === 'monthly') {
+            const parts = k.split('-');
+            return `${parts[0].slice(2)}/${parseInt(parts[1])}月`;
+        }
+        return k;
+    });
+
     const distances = labels.map(k => grouped[k].distanceKm);
     const elevations = labels.map(k => grouped[k].elevationSum);
     const hrAverages = labels.map(k => grouped[k].validHrCount > 0 ? (grouped[k].hrSum / grouped[k].validHrCount).toFixed(1) : null);
@@ -567,7 +583,7 @@ function renderTrends(period) {
     if (trendChart) trendChart.destroy();
     trendChart = new Chart(ctx1, {
         type: 'bar',
-        data: { labels, datasets: [{ label: 'Volume (km)', data: distances, backgroundColor: '#0ea5e9', borderRadius: 4 }] },
+        data: { labels: displayLabels, datasets: [{ label: 'Volume (km)', data: distances, backgroundColor: '#0ea5e9', borderRadius: 4 }] },
         options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: xScale, y: { ...yScale, beginAtZero: true } } }
     });
 
@@ -576,7 +592,7 @@ function renderTrends(period) {
     if (trendElevationChart) trendElevationChart.destroy();
     trendElevationChart = new Chart(ctx2, {
         type: 'bar',
-        data: { labels, datasets: [{ label: '獲得標高 (m)', data: elevations, backgroundColor: '#10b981', borderRadius: 4 }] },
+        data: { labels: displayLabels, datasets: [{ label: '獲得標高 (m)', data: elevations, backgroundColor: '#10b981', borderRadius: 4 }] },
         options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: xScale, y: { ...yScale, beginAtZero: true } } }
     });
 
@@ -619,7 +635,7 @@ function renderTrends(period) {
     if (trendAeChart) trendAeChart.destroy();
     trendAeChart = new Chart(ctx4, {
         type: 'line',
-        data: { labels, datasets: [{ label: 'Speed/Heartbeat (m×10⁻³)', data: aeAverages, borderColor: '#8b5cf6', backgroundColor: 'rgba(139,92,246,0.1)', fill: true, tension: 0.3, spanGaps: true, pointRadius: 3 }] },
+        data: { labels: displayLabels, datasets: [{ label: 'Speed/Heartbeat (m×10⁻³)', data: aeAverages, borderColor: '#8b5cf6', backgroundColor: 'rgba(139,92,246,0.1)', fill: true, tension: 0.3, spanGaps: true, pointRadius: 3 }] },
         options: {
             responsive: true, maintainAspectRatio: false,
             plugins: { legend: { labels: { color: '#475569' } } },
@@ -632,7 +648,7 @@ function renderTrends(period) {
     if (trendVo2Chart) trendVo2Chart.destroy();
     trendVo2Chart = new Chart(ctx5, {
         type: 'line',
-        data: { labels, datasets: [{ label: 'VO2max', data: vo2Averages, borderColor: '#f43f5e', backgroundColor: 'rgba(244,63,94,0.1)', fill: true, tension: 0.3, spanGaps: true, pointRadius: 3 }] },
+        data: { labels: displayLabels, datasets: [{ label: 'VO2max', data: vo2Averages, borderColor: '#f43f5e', backgroundColor: 'rgba(244,63,94,0.1)', fill: true, tension: 0.3, spanGaps: true, pointRadius: 3 }] },
         options: {
             responsive: true, maintainAspectRatio: false,
             plugins: { legend: { labels: { color: '#475569' } } },
@@ -1064,3 +1080,4 @@ function drawTrailChart(targetX, predPaceSec, targetDist, raceName) {
         }
     });
 }
+
