@@ -92,13 +92,18 @@ def fetch_garmin_data() -> list:
     gpx_dir = "data/gpx"
     os.makedirs(gpx_dir, exist_ok=True)
     
-    # Read existing IDs from Supabase to avoid duplicates
-    existing_ids = set()
+    # Read existing records from Supabase (ID + title + notes) to detect updates
+    existing_records = {}  # activityId -> {activityName, description}
     try:
-        response = supabase.table("activities").select("activityId").execute()
-        existing_ids = {str(row['activityId']) for row in response.data}
+        response = supabase.table("activities").select("activityId,activityName,description").execute()
+        for row in response.data:
+            existing_records[str(row['activityId'])] = {
+                'activityName': row.get('activityName', ''),
+                'description': row.get('description', ''),
+            }
     except Exception as e:
-        logging.error(f"Failed to fetch existing activity IDs from Supabase: {e}")
+        logging.error(f"Failed to fetch existing activity records from Supabase: {e}")
+    existing_ids = set(existing_records.keys())
 
     activities_all = []
     start = 0
@@ -141,11 +146,12 @@ def fetch_garmin_data() -> list:
     ]
     
     new_records = 0
+    updated_records = 0
             
     for activity in running_activities:
         act_id = str(activity.get('activityId'))
         if act_id not in existing_ids:
-            # Build dict with only keys that are in the table
+            # --- 新規アクティビティ: insert + GPXダウンロード ---
             row_data = {}
             for k in keys_to_save:
                 val = activity.get(k)
@@ -158,7 +164,7 @@ def fetch_garmin_data() -> list:
                 new_records += 1
             except Exception as e:
                 logging.error(f"Failed to insert activity {act_id} into Supabase: {e}")
-                continue # Skip GPX if activity insert failed
+                continue  # GPXはinsert成功時のみ
                 
             # Download and parse GPX file
             try:
@@ -166,13 +172,30 @@ def fetch_garmin_data() -> list:
                 gpx_path = os.path.join(gpx_dir, f"{act_id}.gpx")
                 with open(gpx_path, "wb") as gpx_file:
                     gpx_file.write(gpx_data)
-                
-                # Insert GPX to Supabase
                 parse_gpx_to_supabase(gpx_path, act_id, supabase)
             except Exception as e:
                 logging.warning(f"Could not download or parse GPX for activity {act_id}: {e}")
+
+        else:
+            # --- 既存アクティビティ: タイトル・ノートの変更のみ反映 ---
+            new_name = activity.get('activityName') or ''
+            new_desc = activity.get('description') or ''
+            old_name = existing_records[act_id].get('activityName') or ''
+            old_desc = existing_records[act_id].get('description') or ''
+
+            if new_name != old_name or new_desc != old_desc:
+                update_data = {
+                    'activityName': new_name,
+                    'description': new_desc,
+                }
+                try:
+                    supabase.table("activities").update(update_data).eq("activityId", act_id).execute()
+                    updated_records += 1
+                    logging.info(f"Updated title/notes for activity {act_id}")
+                except Exception as e:
+                    logging.error(f"Failed to update activity {act_id}: {e}")
                 
-    logging.info(f"Saved {new_records} new activities to Supabase")
+    logging.info(f"Saved {new_records} new activities, updated {updated_records} existing activities to Supabase")
     
     # Return ONLY the last 7 days for Gemini to analyze
     recent_activities = [
