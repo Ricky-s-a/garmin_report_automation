@@ -139,6 +139,35 @@
                     <button id="pill-yearly" class="pill-btn" onclick="renderTrends('yearly')">Yearly</button>
                 </div>
 
+                <!-- PR Panel -->
+                <div class="card"
+                    style="margin-bottom:24px; background:linear-gradient(135deg,#1e293b,#0f172a); border:1px solid #334155;">
+                    <h3 style="color:#f1f5f9; margin-bottom:16px;">🏆 Personal Records</h3>
+                    <div class="metrics-grid">
+                        <div class="metric-card" style="background:#1e293b; border:1px solid #334155;">
+                            <span class="label" style="color:#94a3b8;">最長距離</span>
+                            <span class="value" id="pr-distance" style="color:#38bdf8;">-- km</span>
+                            <span style="font-size:0.75rem;color:#64748b;" id="pr-distance-date">--</span>
+                        </div>
+                        <div class="metric-card" style="background:#1e293b; border:1px solid #334155;">
+                            <span class="label" style="color:#94a3b8;">最速ペース</span>
+                            <span class="value" id="pr-pace" style="color:#4ade80;">--'--"</span>
+                            <span style="font-size:0.75rem;color:#64748b;" id="pr-pace-date">--</span>
+                        </div>
+                        <div class="metric-card" style="background:#1e293b; border:1px solid #334155;">
+                            <span class="label" style="color:#94a3b8;">最大獲得標高</span>
+                            <span class="value" id="pr-elevation" style="color:#fb923c;">-- m</span>
+                            <span style="font-size:0.75rem;color:#64748b;" id="pr-elevation-date">--</span>
+                        </div>
+                        <div class="metric-card" style="background:#1e293b; border:1px solid #334155;">
+                            <span class="label" style="color:#94a3b8;">最高 VO2max</span>
+                            <span class="value" id="pr-vo2" style="color:#c084fc;">--</span>
+                            <span style="font-size:0.75rem;color:#64748b;" id="pr-vo2-date">--</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Summary Stats -->
                 <div class="metrics-grid">
                     <div class="metric-card">
                         <span class="label">Total Distance</span>
@@ -158,25 +187,79 @@
                     </div>
                 </div>
 
-                <div class="card chart-card" style="margin-bottom: 24px;">
-                    <h3>Volume Over Time (Distance in km)</h3>
-                    <div class="chart-container" style="height: 300px;">
-                        <canvas id="trendChart"></canvas>
+                <!-- Training Calendar -->
+                <div class="card" style="margin-bottom:24px;">
+                    <h3>📅 Training Calendar (過去52週)</h3>
+                    <p style="font-size:0.82rem;color:#64748b;margin:-8px 0 12px;">緑が濃いほど長距離のラン。</p>
+                    <div id="calendar-heatmap" style="overflow-x:auto;"></div>
+                    <div
+                        style="display:flex;align-items:center;gap:6px;margin-top:12px;font-size:0.78rem;color:#64748b;">
+                        <span>少</span>
+                        <span
+                            style="width:12px;height:12px;background:#e2e8f0;border-radius:2px;display:inline-block;"></span>
+                        <span
+                            style="width:12px;height:12px;background:#bbf7d0;border-radius:2px;display:inline-block;"></span>
+                        <span
+                            style="width:12px;height:12px;background:#4ade80;border-radius:2px;display:inline-block;"></span>
+                        <span
+                            style="width:12px;height:12px;background:#16a34a;border-radius:2px;display:inline-block;"></span>
+                        <span
+                            style="width:12px;height:12px;background:#052e16;border-radius:2px;display:inline-block;"></span>
+                        <span>多</span>
                     </div>
                 </div>
 
-                <div class="card chart-card" style="margin-bottom: 24px;">
-                    <h3>Running Efficiency (Pace & Heart Rate)</h3>
-                    <div class="chart-container" style="height: 300px;">
-                        <canvas id="trendPaceHRChart"></canvas>
-                    </div>
+                <!-- Volume -->
+                <div class="card chart-card" style="margin-bottom:24px;">
+                    <h3>📦 Volume (走行距離)</h3>
+                    <div class="chart-container" style="height:260px;"><canvas id="trendChart"></canvas></div>
                 </div>
 
-                <div class="card chart-card" style="margin-bottom: 24px;">
-                    <h3>Running Form (Cadence & Stride Length)</h3>
-                    <div class="chart-container" style="height: 300px;">
-                        <canvas id="trendCadenceChart"></canvas>
-                    </div>
+                <!-- Elevation -->
+                <div class="card chart-card" style="margin-bottom:24px;">
+                    <h3>⛰️ 獲得標高トレンド</h3>
+                    <div class="chart-container" style="height:240px;"><canvas id="trendElevationChart"></canvas></div>
+                </div>
+
+                <!-- Pace + HR -->
+                <div class="card chart-card" style="margin-bottom:24px;">
+                    <h3>💚 Running Efficiency (Pace &amp; Heart Rate)</h3>
+                    <div class="chart-container" style="height:260px;"><canvas id="trendPaceHRChart"></canvas></div>
+                </div>
+
+                <!-- Aerobic Efficiency -->
+                <div class="card chart-card" style="margin-bottom:24px;">
+                    <h3>🫀 有酸素効率 (Speed / Heartbeat)</h3>
+                    <p style="font-size:0.82rem;color:#64748b;margin:-8px 0 8px;">心拍1回あたりの移動距離(m×10⁻³)。値↑ = 同じ心拍でより速く =
+                        有酸素能力向上。</p>
+                    <div class="chart-container" style="height:240px;"><canvas id="trendAeChart"></canvas></div>
+                </div>
+
+                <!-- VO2max -->
+                <div class="card chart-card" style="margin-bottom:24px;">
+                    <h3>🫁 VO2max 推移</h3>
+                    <div class="chart-container" style="height:240px;"><canvas id="trendVo2Chart"></canvas></div>
+                </div>
+
+                <!-- Training Effect -->
+                <div class="card chart-card" style="margin-bottom:24px;">
+                    <h3>⚡ トレーニング効果 (TE) 分布</h3>
+                    <p style="font-size:0.82rem;color:#64748b;margin:-8px 0 8px;">
+                        有酸素TE（青）と無酸素TE（橙）の積み上げ。ベース構築なら有酸素比率↑が理想。</p>
+                    <div class="chart-container" style="height:240px;"><canvas id="trendTeChart"></canvas></div>
+                </div>
+
+                <!-- Cadence + Stride -->
+                <div class="card chart-card" style="margin-bottom:24px;">
+                    <h3>🦶 Running Form (Cadence &amp; Stride)</h3>
+                    <div class="chart-container" style="height:260px;"><canvas id="trendCadenceChart"></canvas></div>
+                </div>
+
+                <!-- Running Dynamics -->
+                <div class="card chart-card" style="margin-bottom:24px;">
+                    <h3>📐 ランニングダイナミクス推移</h3>
+                    <p style="font-size:0.82rem;color:#64748b;margin:-8px 0 8px;">上下動(cm)↓・接地時間(ms)↓が走りの改善サイン。</p>
+                    <div class="chart-container" style="height:240px;"><canvas id="trendFormChart"></canvas></div>
                 </div>
             </div>
 

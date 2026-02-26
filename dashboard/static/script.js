@@ -1,9 +1,14 @@
-let map;
+﻿let map;
 let polyline;
 let analysisChart;
 let trendChart;
 let trendPaceHRChart;
 let trendCadenceChart;
+let trendElevationChart;
+let trendAeChart;
+let trendVo2Chart;
+let trendTeChart;
+let trendFormChart;
 let globalActivities = [];
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -425,21 +430,14 @@ function updateChart(points) {
 
 // ============== Trends Analysis ============== //
 function renderTrends(period) {
-    // period options: 'weekly', 'monthly', 'yearly'
-
-    // Update pill activation
     document.querySelectorAll('.pill-btn').forEach(el => el.classList.remove('active'));
     document.getElementById(`pill-${period}`).classList.add('active');
 
     if (!globalActivities || globalActivities.length === 0) return;
 
-    // Filter to only consider runs with a valid distance
     const validActivities = globalActivities.filter(a => parseFloat(a.distance) > 0);
-
-    // Reverse because activities are sorted latest first, and we want Oldest -> Newest on the x-axis for trends
     const dataReversed = [...validActivities].reverse();
 
-    // Grouping structure
     const grouped = {};
     let totalDistKm = 0;
     let sumCadence = 0, cadenceCount = 0;
@@ -447,17 +445,12 @@ function renderTrends(period) {
     let sumStride = 0, strideCount = 0;
 
     dataReversed.forEach(act => {
-        // Safe cross-browser date parsing for "YYYY-MM-DD HH:MM:SS"
         let dateStr = act.startTimeLocal || '';
-        if (dateStr.includes(' ')) {
-            dateStr = dateStr.replace(' ', 'T');
-        }
+        if (dateStr.includes(' ')) dateStr = dateStr.replace(' ', 'T');
         const d = new Date(dateStr);
-
-        if (isNaN(d.getTime())) return; // Skip invalid dates
+        if (isNaN(d.getTime())) return;
 
         let key = '';
-
         if (period === 'weekly') {
             const firstDayOfYear = new Date(d.getFullYear(), 0, 1);
             const pastDaysOfYear = (d - firstDayOfYear) / 86400000;
@@ -465,22 +458,24 @@ function renderTrends(period) {
             key = `${d.getFullYear()}-W${weekNum.toString().padStart(2, '0')}`;
         } else if (period === 'monthly') {
             key = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}`;
-        } else if (period === 'yearly') {
+        } else {
             key = `${d.getFullYear()}`;
         }
 
         if (!grouped[key]) {
             grouped[key] = {
-                distanceKm: 0,
-                count: 0,
-                hrSum: 0,
-                cadenceSum: 0,
-                speedSum: 0,
-                strideSum: 0,
-                validHrCount: 0,
-                validCadenceCount: 0,
-                validSpeedCount: 0,
-                validStrideCount: 0
+                distanceKm: 0, count: 0,
+                hrSum: 0, validHrCount: 0,
+                cadenceSum: 0, validCadenceCount: 0,
+                speedSum: 0, validSpeedCount: 0,
+                strideSum: 0, validStrideCount: 0,
+                elevationSum: 0,
+                aeSum: 0, validAeCount: 0,
+                vo2Sum: 0, validVo2Count: 0,
+                aerobicTeSum: 0, validAeTeCount: 0,
+                anaerobicTeSum: 0, validAnTeCount: 0,
+                vertOscSum: 0, validVertOscCount: 0,
+                gctSum: 0, validGctCount: 0,
             };
         }
 
@@ -489,146 +484,129 @@ function renderTrends(period) {
         grouped[key].count += 1;
         totalDistKm += distKm;
 
-        // HR
         const hr = parseFloat(act.averageHR);
-        if (hr > 0) {
-            grouped[key].hrSum += hr;
-            grouped[key].validHrCount += 1;
-        }
+        if (hr > 0) { grouped[key].hrSum += hr; grouped[key].validHrCount++; }
 
-        // Cadence (ensure spm representation 160-190 instead of half)
         let cad = parseFloat(act.averageRunningCadenceInStepsPerMinute) || 0;
         if (cad > 0) {
             cad = cad < 100 ? cad * 2 : cad;
-            grouped[key].cadenceSum += cad;
-            grouped[key].validCadenceCount += 1;
-
-            // Global average
-            sumCadence += cad;
-            cadenceCount += 1;
+            grouped[key].cadenceSum += cad; grouped[key].validCadenceCount++;
+            sumCadence += cad; cadenceCount++;
         }
 
-        // Stride Length (cm to m translation usually handled by Garmin, check usually it's around 0.8 - 1.5 meters)
         let stride = parseFloat(act.avgStrideLength) || 0;
-        // Sometimes Garmin API returns stride length in cm (e.g., 95.0), sometimes in meters (e.g., 0.95). Normalize to meters.
-        if (stride > 20) { stride = stride / 100; }
-
+        if (stride > 20) stride = stride / 100;
         if (stride > 0) {
-            grouped[key].strideSum += stride;
-            grouped[key].validStrideCount += 1;
-            sumStride += stride;
-            strideCount += 1;
+            grouped[key].strideSum += stride; grouped[key].validStrideCount++;
+            sumStride += stride; strideCount++;
         }
 
-        // Speed / Pace
         const spd = parseFloat(act.averageSpeed);
         if (spd > 0) {
-            grouped[key].speedSum += spd;
-            grouped[key].validSpeedCount += 1;
-
-            // Global average
-            sumSpeed += spd;
-            speedCount += 1;
+            grouped[key].speedSum += spd; grouped[key].validSpeedCount++;
+            sumSpeed += spd; speedCount++;
         }
+
+        const elev = parseFloat(act.elevationGain) || 0;
+        grouped[key].elevationSum += elev;
+
+        if (spd > 0 && hr > 0) {
+            grouped[key].aeSum += (spd / hr) * 1000;
+            grouped[key].validAeCount++;
+        }
+
+        const vo2 = parseFloat(act.vO2MaxValue);
+        if (vo2 > 0) { grouped[key].vo2Sum += vo2; grouped[key].validVo2Count++; }
+
+        const aerTe = parseFloat(act.aerobicTrainingEffect);
+        if (aerTe > 0) { grouped[key].aerobicTeSum += aerTe; grouped[key].validAeTeCount++; }
+        const anTe = parseFloat(act.anaerobicTrainingEffect);
+        if (anTe > 0) { grouped[key].anaerobicTeSum += anTe; grouped[key].validAnTeCount++; }
+
+        const vertOsc = parseFloat(act.avgVerticalOscillation);
+        if (vertOsc > 0) { grouped[key].vertOscSum += vertOsc; grouped[key].validVertOscCount++; }
+        const gct = parseFloat(act.avgGroundContactTime);
+        if (gct > 0) { grouped[key].gctSum += gct; grouped[key].validGctCount++; }
     });
 
     const labels = Object.keys(grouped);
-    const distances = labels.map(key => grouped[key].distanceKm);
-
-    // Averages data for charts
-    const hrAverages = labels.map(key => grouped[key].validHrCount > 0 ? (grouped[key].hrSum / grouped[key].validHrCount).toFixed(1) : null);
-    const cadenceAverages = labels.map(key => grouped[key].validCadenceCount > 0 ? (grouped[key].cadenceSum / grouped[key].validCadenceCount).toFixed(1) : null);
-    const strideAverages = labels.map(key => grouped[key].validStrideCount > 0 ? (grouped[key].strideSum / grouped[key].validStrideCount).toFixed(2) : null);
-    const paceMinsPerKm = labels.map(key => {
-        if (grouped[key].validSpeedCount === 0) return null;
-        const avgSpeedMs = grouped[key].speedSum / grouped[key].validSpeedCount;
-        return (1000 / avgSpeedMs / 60).toFixed(2); // purely numeric for chart e.g 4.5
+    const distances = labels.map(k => grouped[k].distanceKm);
+    const elevations = labels.map(k => grouped[k].elevationSum);
+    const hrAverages = labels.map(k => grouped[k].validHrCount > 0 ? (grouped[k].hrSum / grouped[k].validHrCount).toFixed(1) : null);
+    const cadenceAverages = labels.map(k => grouped[k].validCadenceCount > 0 ? (grouped[k].cadenceSum / grouped[k].validCadenceCount).toFixed(1) : null);
+    const strideAverages = labels.map(k => grouped[k].validStrideCount > 0 ? (grouped[k].strideSum / grouped[k].validStrideCount).toFixed(2) : null);
+    const paceMinsPerKm = labels.map(k => {
+        if (grouped[k].validSpeedCount === 0) return null;
+        return (1000 / (grouped[k].speedSum / grouped[k].validSpeedCount) / 60).toFixed(2);
     });
+    const aeAverages = labels.map(k => grouped[k].validAeCount > 0 ? (grouped[k].aeSum / grouped[k].validAeCount).toFixed(4) : null);
+    const vo2Averages = labels.map(k => grouped[k].validVo2Count > 0 ? (grouped[k].vo2Sum / grouped[k].validVo2Count).toFixed(1) : null);
+    const aerobicTeAvg = labels.map(k => grouped[k].validAeTeCount > 0 ? (grouped[k].aerobicTeSum / grouped[k].validAeTeCount).toFixed(2) : null);
+    const anaerobicTeAvg = labels.map(k => grouped[k].validAnTeCount > 0 ? (grouped[k].anaerobicTeSum / grouped[k].validAnTeCount).toFixed(2) : null);
+    const vertOscAvg = labels.map(k => grouped[k].validVertOscCount > 0 ? (grouped[k].vertOscSum / grouped[k].validVertOscCount).toFixed(1) : null);
+    const gctAvg = labels.map(k => grouped[k].validGctCount > 0 ? (grouped[k].gctSum / grouped[k].validGctCount).toFixed(0) : null);
 
-    // Update Summary Stats
+    // Summary stats
     document.getElementById('trend-dist').textContent = totalDistKm.toFixed(1) + ' km';
     document.getElementById('trend-count').textContent = dataReversed.length;
-
-    if (cadenceCount > 0) {
-        document.getElementById('trend-cadence').textContent = (sumCadence / cadenceCount).toFixed(0) + ' spm';
-    }
+    if (cadenceCount > 0) document.getElementById('trend-cadence').textContent = (sumCadence / cadenceCount).toFixed(0) + ' spm';
     if (speedCount > 0) {
         const avgPace = speedToPace(sumSpeed / speedCount);
         const avgStride = strideCount > 0 ? (sumStride / strideCount).toFixed(2) + 'm' : '--';
         document.getElementById('trend-pace').textContent = `${avgStride} / ${avgPace}`;
     }
 
-    // --- Volume Chart ---
+    renderPRPanel(validActivities);
+    renderCalendar(validActivities);
+
+    const xScale = { grid: { display: false }, ticks: { color: '#64748b' } };
+    const yScale = { ticks: { color: '#64748b' } };
+
+    // 1. Volume
     const ctx1 = document.getElementById('trendChart').getContext('2d');
     if (trendChart) trendChart.destroy();
-
     trendChart = new Chart(ctx1, {
         type: 'bar',
-        data: {
-            labels: labels,
-            datasets: [{
-                label: 'Volume (km)',
-                data: distances,
-                backgroundColor: '#0ea5e9',
-                borderRadius: 4,
-            }]
-        },
-        options: {
-            responsive: true, maintainAspectRatio: false, color: '#475569',
-            scales: { x: { grid: { display: false } }, y: { beginAtZero: true } },
-            plugins: { legend: { display: false } }
-        }
+        data: { labels, datasets: [{ label: 'Volume (km)', data: distances, backgroundColor: '#0ea5e9', borderRadius: 4 }] },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: xScale, y: { ...yScale, beginAtZero: true } } }
     });
 
-    // --- Pace & HR Chart ---
-    const ctx2 = document.getElementById('trendPaceHRChart').getContext('2d');
-    if (trendPaceHRChart) trendPaceHRChart.destroy();
+    // 2. Elevation
+    const ctx2 = document.getElementById('trendElevationChart').getContext('2d');
+    if (trendElevationChart) trendElevationChart.destroy();
+    trendElevationChart = new Chart(ctx2, {
+        type: 'bar',
+        data: { labels, datasets: [{ label: '獲得標高 (m)', data: elevations, backgroundColor: '#10b981', borderRadius: 4 }] },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: xScale, y: { ...yScale, beginAtZero: true } } }
+    });
 
-    trendPaceHRChart = new Chart(ctx2, {
+    // 3. Pace + HR
+    const ctx3 = document.getElementById('trendPaceHRChart').getContext('2d');
+    if (trendPaceHRChart) trendPaceHRChart.destroy();
+    trendPaceHRChart = new Chart(ctx3, {
         type: 'line',
         data: {
-            labels: labels,
+            labels,
             datasets: [
-                {
-                    label: 'Avg Heart Rate (bpm)',
-                    data: hrAverages,
-                    borderColor: '#ef4444',
-                    backgroundColor: '#ef4444',
-                    yAxisID: 'y',
-                    tension: 0.3,
-                    spanGaps: true
-                },
-                {
-                    label: 'Avg Pace (min/km)',
-                    data: paceMinsPerKm,
-                    borderColor: '#10b981',
-                    backgroundColor: '#10b981',
-                    yAxisID: 'y1',
-                    tension: 0.3,
-                    spanGaps: true
-                }
+                { label: 'Avg Heart Rate (bpm)', data: hrAverages, borderColor: '#ef4444', backgroundColor: '#ef4444', yAxisID: 'y', tension: 0.3, spanGaps: true },
+                { label: 'Avg Pace (min/km)', data: paceMinsPerKm, borderColor: '#10b981', backgroundColor: '#10b981', yAxisID: 'y1', tension: 0.3, spanGaps: true }
             ]
         },
         options: {
-            responsive: true, maintainAspectRatio: false, color: '#475569',
+            responsive: true, maintainAspectRatio: false,
             interaction: { mode: 'index', intersect: false },
             scales: {
-                x: { grid: { display: false } },
-                y: { type: 'linear', display: true, position: 'left', title: { display: true, text: 'Heart Rate' } },
-                // Reverse the Pace axis because lower is faster
-                y1: { type: 'linear', display: true, position: 'right', reverse: true, title: { display: true, text: 'Pace (min/km)' }, grid: { drawOnChartArea: false } }
+                x: xScale,
+                y: { type: 'linear', display: true, position: 'left', title: { display: true, text: 'Heart Rate', color: '#64748b' }, ticks: { color: '#64748b' } },
+                y1: { type: 'linear', display: true, position: 'right', reverse: true, title: { display: true, text: 'Pace (min/km)', color: '#64748b' }, grid: { drawOnChartArea: false }, ticks: { color: '#64748b' } }
             },
             plugins: {
+                legend: { labels: { color: '#475569' } },
                 tooltip: {
                     callbacks: {
-                        label: function (context) {
-                            if (context.datasetIndex === 1) { // Pace
-                                const val = context.parsed.y;
-                                const m = Math.floor(val);
-                                const s = Math.floor((val - m) * 60).toString().padStart(2, '0');
-                                return `Avg Pace: ${m}'${s}" /km`;
-                            }
-                            return `Avg HR: ${context.parsed.y} bpm`;
+                        label: function (c) {
+                            if (c.datasetIndex === 1) { const v = c.parsed.y; const m = Math.floor(v); const s = Math.floor((v - m) * 60).toString().padStart(2, '0'); return `Avg Pace: ${m}'${s}" /km`; }
+                            return `Avg HR: ${c.parsed.y} bpm`;
                         }
                     }
                 }
@@ -636,59 +614,224 @@ function renderTrends(period) {
         }
     });
 
-    // --- Cadence & Stride Chart ---
-    const ctx3 = document.getElementById('trendCadenceChart').getContext('2d');
-    if (trendCadenceChart) trendCadenceChart.destroy();
-
-    trendCadenceChart = new Chart(ctx3, {
+    // 4. Aerobic Efficiency
+    const ctx4 = document.getElementById('trendAeChart').getContext('2d');
+    if (trendAeChart) trendAeChart.destroy();
+    trendAeChart = new Chart(ctx4, {
         type: 'line',
+        data: { labels, datasets: [{ label: 'Speed/Heartbeat (m×10⁻³)', data: aeAverages, borderColor: '#8b5cf6', backgroundColor: 'rgba(139,92,246,0.1)', fill: true, tension: 0.3, spanGaps: true, pointRadius: 3 }] },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { labels: { color: '#475569' } } },
+            scales: { x: xScale, y: { title: { display: true, text: 'm / heartbeat (×10⁻³)', color: '#64748b' }, ticks: { color: '#64748b' } } }
+        }
+    });
+
+    // 5. VO2max
+    const ctx5 = document.getElementById('trendVo2Chart').getContext('2d');
+    if (trendVo2Chart) trendVo2Chart.destroy();
+    trendVo2Chart = new Chart(ctx5, {
+        type: 'line',
+        data: { labels, datasets: [{ label: 'VO2max', data: vo2Averages, borderColor: '#f43f5e', backgroundColor: 'rgba(244,63,94,0.1)', fill: true, tension: 0.3, spanGaps: true, pointRadius: 3 }] },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { labels: { color: '#475569' } } },
+            scales: { x: xScale, y: { title: { display: true, text: 'ml/kg/min', color: '#64748b' }, ticks: { color: '#64748b' } } }
+        }
+    });
+
+    // 6. Training Effect (stacked bar)
+    const ctx6 = document.getElementById('trendTeChart').getContext('2d');
+    if (trendTeChart) trendTeChart.destroy();
+    trendTeChart = new Chart(ctx6, {
+        type: 'bar',
         data: {
-            labels: labels,
+            labels,
             datasets: [
-                {
-                    label: 'Avg Cadence (spm)',
-                    data: cadenceAverages,
-                    borderColor: '#6366f1',
-                    backgroundColor: 'rgba(99, 102, 241, 0.2)',
-                    fill: false,
-                    tension: 0.3,
-                    spanGaps: true,
-                    yAxisID: 'y'
-                },
-                {
-                    label: 'Avg Stride Length (m)',
-                    data: strideAverages,
-                    borderColor: '#f59e0b',
-                    backgroundColor: 'rgba(245, 158, 11, 0.2)',
-                    fill: false,
-                    tension: 0.3,
-                    spanGaps: true,
-                    yAxisID: 'y1'
-                }
+                { label: '有酸素 TE', data: aerobicTeAvg, backgroundColor: '#3b82f6', borderRadius: 4 },
+                { label: '無酸素 TE', data: anaerobicTeAvg, backgroundColor: '#f97316', borderRadius: 4 }
             ]
         },
         options: {
-            responsive: true, maintainAspectRatio: false, color: '#475569',
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { labels: { color: '#475569' } } },
+            scales: { x: { stacked: true, ...xScale }, y: { stacked: true, min: 0, max: 8, ticks: { color: '#64748b' } } }
+        }
+    });
+
+    // 7. Cadence + Stride
+    const ctx7 = document.getElementById('trendCadenceChart').getContext('2d');
+    if (trendCadenceChart) trendCadenceChart.destroy();
+    trendCadenceChart = new Chart(ctx7, {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [
+                { label: 'Avg Cadence (spm)', data: cadenceAverages, borderColor: '#6366f1', fill: false, tension: 0.3, spanGaps: true, yAxisID: 'y' },
+                { label: 'Avg Stride Length (m)', data: strideAverages, borderColor: '#f59e0b', fill: false, tension: 0.3, spanGaps: true, yAxisID: 'y1' }
+            ]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
             interaction: { mode: 'index', intersect: false },
             scales: {
-                x: { grid: { display: false } },
-                y: { min: 140, max: 200, title: { display: true, text: 'Steps Per Minute' }, position: 'left' },
-                y1: { min: 0.5, max: 2.0, title: { display: true, text: 'Stride Length (m)' }, position: 'right', grid: { drawOnChartArea: false } }
+                x: xScale,
+                y: { min: 140, max: 200, title: { display: true, text: 'Steps Per Minute', color: '#64748b' }, position: 'left', ticks: { color: '#64748b' } },
+                y1: { min: 0.5, max: 2.0, title: { display: true, text: 'Stride Length (m)', color: '#64748b' }, position: 'right', grid: { drawOnChartArea: false }, ticks: { color: '#64748b' } }
             },
             plugins: {
                 legend: { display: true, labels: { color: '#475569' } },
                 tooltip: {
                     callbacks: {
-                        label: function (context) {
-                            if (context.datasetIndex === 0) return `Avg Cadence: ${context.parsed.y} spm`;
-                            if (context.datasetIndex === 1) return `Avg Stride: ${context.parsed.y} m`;
+                        label: function (c) {
+                            if (c.datasetIndex === 0) return `Avg Cadence: ${c.parsed.y} spm`;
+                            return `Avg Stride: ${c.parsed.y} m`;
                         }
                     }
                 }
             }
         }
     });
+
+    // 8. Running Dynamics (VertOsc + GCT)
+    const ctx8 = document.getElementById('trendFormChart').getContext('2d');
+    if (trendFormChart) trendFormChart.destroy();
+    trendFormChart = new Chart(ctx8, {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [
+                { label: '上下動 (cm)', data: vertOscAvg, borderColor: '#14b8a6', backgroundColor: 'rgba(20,184,166,0.1)', fill: true, tension: 0.3, spanGaps: true, yAxisID: 'y', pointRadius: 3 },
+                { label: '接地時間 (ms)', data: gctAvg, borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.1)', fill: true, tension: 0.3, spanGaps: true, yAxisID: 'y1', pointRadius: 3 }
+            ]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            scales: {
+                x: xScale,
+                y: { title: { display: true, text: '上下動 (cm)', color: '#14b8a6' }, position: 'left', ticks: { color: '#64748b' } },
+                y1: { title: { display: true, text: '接地時間 (ms)', color: '#f59e0b' }, position: 'right', grid: { drawOnChartArea: false }, ticks: { color: '#64748b' } }
+            },
+            plugins: { legend: { labels: { color: '#475569' } } }
+        }
+    });
 }
+
+// ============== PR Panel ============== //
+function renderPRPanel(activities) {
+    if (!activities || activities.length === 0) return;
+
+    let maxDist = 0, maxDistAct = null;
+    let minPaceSec = Infinity, minPaceAct = null;
+    let maxElev = 0, maxElevAct = null;
+    let maxVo2 = 0, maxVo2Act = null;
+
+    activities.forEach(act => {
+        const dist = parseFloat(act.distance) || 0;
+        if (dist > maxDist) { maxDist = dist; maxDistAct = act; }
+
+        const spd = parseFloat(act.averageSpeed) || 0;
+        if (spd > 0) {
+            const paceSec = 1000 / spd;
+            if (paceSec < minPaceSec && paceSec > 180) { minPaceSec = paceSec; minPaceAct = act; }
+        }
+
+        const elev = parseFloat(act.elevationGain) || 0;
+        if (elev > maxElev) { maxElev = elev; maxElevAct = act; }
+
+        const vo2 = parseFloat(act.vO2MaxValue) || 0;
+        if (vo2 > maxVo2) { maxVo2 = vo2; maxVo2Act = act; }
+    });
+
+    if (maxDistAct) {
+        document.getElementById('pr-distance').textContent = (maxDist / 1000).toFixed(2) + ' km';
+        document.getElementById('pr-distance-date').textContent = (maxDistAct.startTimeLocal || '').substring(0, 10);
+    }
+    if (minPaceAct) {
+        const m = Math.floor(minPaceSec / 60);
+        const s = Math.floor(minPaceSec % 60).toString().padStart(2, '0');
+        document.getElementById('pr-pace').textContent = `${m}'${s}" /km`;
+        document.getElementById('pr-pace-date').textContent = (minPaceAct.startTimeLocal || '').substring(0, 10);
+    }
+    if (maxElevAct) {
+        document.getElementById('pr-elevation').textContent = maxElev.toFixed(0) + ' m';
+        document.getElementById('pr-elevation-date').textContent = (maxElevAct.startTimeLocal || '').substring(0, 10);
+    }
+    if (maxVo2Act) {
+        document.getElementById('pr-vo2').textContent = maxVo2.toFixed(1);
+        document.getElementById('pr-vo2-date').textContent = (maxVo2Act.startTimeLocal || '').substring(0, 10);
+    }
+}
+
+// ============== Calendar Heatmap ============== //
+function renderCalendar(activities) {
+    const container = document.getElementById('calendar-heatmap');
+    if (!container) return;
+
+    const dateMap = {};
+    activities.forEach(act => {
+        const dateStr = (act.startTimeLocal || '').substring(0, 10);
+        if (!dateStr) return;
+        const distKm = parseFloat(act.distance) / 1000 || 0;
+        dateMap[dateStr] = (dateMap[dateStr] || 0) + distKm;
+    });
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const startDate = new Date(today);
+    startDate.setDate(startDate.getDate() - 364);
+    startDate.setDate(startDate.getDate() - startDate.getDay()); // align to Sunday
+
+    const getColor = (km) => {
+        if (!km || km === 0) return '#e2e8f0';
+        if (km < 5) return '#bbf7d0';
+        if (km < 10) return '#4ade80';
+        if (km < 20) return '#16a34a';
+        return '#052e16';
+    };
+
+    const monthLabels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const weeks = [];
+    let current = new Date(startDate);
+    while (current <= today) {
+        const week = [];
+        for (let d = 0; d < 7; d++) {
+            const dateStr = current.toISOString().substring(0, 10);
+            week.push({ dateStr, distKm: dateMap[dateStr] || 0, isFuture: current > today });
+            current.setDate(current.getDate() + 1);
+        }
+        weeks.push(week);
+    }
+
+    let prevMonth = -1;
+    let html = `<div style="display:flex;gap:2px;align-items:flex-start;">`;
+    html += `<div style="display:flex;flex-direction:column;gap:2px;padding-top:20px;margin-right:4px;">`;
+    ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].forEach((label, i) => {
+        html += `<div style="height:12px;font-size:10px;color:#94a3b8;line-height:12px;">${[1, 3, 5].includes(i) ? label : ''}</div>`;
+    });
+    html += `</div>`;
+
+    weeks.forEach(week => {
+        html += `<div style="display:flex;flex-direction:column;gap:2px;">`;
+        const monthDate = new Date(week[0].dateStr);
+        const month = monthDate.getMonth();
+        const monthStr = (month !== prevMonth && monthDate.getDate() <= 7) ? monthLabels[month] : '';
+        if (month !== prevMonth && monthDate.getDate() <= 7) prevMonth = month;
+        html += `<div style="height:18px;font-size:10px;color:#94a3b8;text-align:center;">${monthStr}</div>`;
+        week.forEach(day => {
+            const color = day.isFuture ? 'transparent' : getColor(day.distKm);
+            const title = day.distKm > 0 ? `${day.dateStr}: ${day.distKm.toFixed(1)}km` : day.dateStr;
+            html += `<div title="${title}" style="width:12px;height:12px;background:${color};border-radius:2px;"></div>`;
+        });
+        html += `</div>`;
+    });
+    html += `</div>`;
+    container.innerHTML = html;
+}
+
+
+
 
 // ============== Trail Pace Calculator ============== //
 let trailRegressionModel = { a: 0, b: 0 }; // Pace = a * Elev/km + b
