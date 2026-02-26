@@ -82,7 +82,11 @@ def get_activity_gpx(activity_id: str):
     return df_filtered.to_dict(orient="records")
 
 @app.get("/api/activities/{activity_id}/analysis")
-def get_activity_analysis(activity_id: str, regenerate: bool = False):
+def get_activity_analysis(activity_id: str, regenerate: bool = False, model: str = "gemini-2.5-flash"):
+    # Allowlist to prevent arbitrary model injection
+    ALLOWED_MODELS = {"gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"}
+    if model not in ALLOWED_MODELS:
+        model = "gemini-2.5-flash"
     try:
         supabase = get_supabase_client()
         response = supabase.table("activities").select("*").eq("activityId", activity_id).execute()
@@ -227,7 +231,7 @@ def get_activity_analysis(activity_id: str, regenerate: bool = False):
     client = genai.Client(api_key=api_key)
     try:
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model=model,
             contents=user_content,
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
@@ -241,7 +245,7 @@ def get_activity_analysis(activity_id: str, regenerate: bool = False):
         except Exception as save_err:
             print(f"Warning: failed to cache AI analysis to Supabase: {save_err}")
         
-        return {"analysis": analysis_text}
+        return {"analysis": analysis_text, "model": model}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

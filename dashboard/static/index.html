@@ -74,8 +74,22 @@
                 <!-- AI Coach Analysis -->
                 <div class="card ai-analysis-card"
                     style="margin-bottom: 24px; background: #f8fafc; border-left: 4px solid #8b5cf6;">
-                    <h3>🧠 AI Coach Analysis (<span style="font-size: 0.8em; font-weight:normal;">Uphill Athlete &
-                            Daniels</span>)</h3>
+                    <div
+                        style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 8px;">
+                        <h3 style="margin: 0;">🧠 AI Coach Analysis <span
+                                style="font-size: 0.8em; font-weight:normal;">(Uphill Athlete & Daniels)</span></h3>
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <label for="model-select"
+                                style="font-size: 0.82rem; color: #64748b; font-weight: 500; white-space: nowrap;">🤖
+                                Model:</label>
+                            <select id="model-select"
+                                style="padding: 5px 10px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 0.85rem; color: #334155; background: white; cursor: pointer;">
+                                <option value="gemini-2.5-flash">Gemini 2.5 Flash ⚡ (高速)</option>
+                                <option value="gemini-2.5-pro">Gemini 2.5 Pro 🎯 (高精度)</option>
+                                <option value="gemini-2.0-flash">Gemini 2.0 Flash ⚖️ (バランス)</option>
+                            </select>
+                        </div>
+                    </div>
                     <div id="ai-analysis-content" style="padding: 10px 0;">
                         <button id="btn-generate-ai" class="btn"
                             style="background: #8b5cf6; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: 600;">Generate

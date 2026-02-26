@@ -262,6 +262,9 @@ async function loadActivityDetails(activity, allActivities) {
     }
 
     async function runAnalysis(regenerate = false) {
+        const selectedModel = document.getElementById('model-select')?.value || 'gemini-2.5-flash';
+        const modelLabel = document.getElementById('model-select')?.options[document.getElementById('model-select').selectedIndex]?.text || selectedModel;
+
         let seconds = 0;
         const timerId = setInterval(() => {
             seconds++;
@@ -273,24 +276,28 @@ async function loadActivityDetails(activity, allActivities) {
             <div class="ai-loader-container">
                 <div class="ai-spinner"></div>
                 <div class="ai-loader-text">
-                    Analyzing data using Google Gemini... (<span id="ai-timer">0</span>s elapsed)
+                    Analyzing with <strong>${modelLabel}</strong>... (<span id="ai-timer">0</span>s elapsed)
                 </div>
             </div>
         `;
 
         try {
-            const url = `/api/activities/${activity.activityId}/analysis${regenerate ? '?regenerate=true' : ''}`;
+            let url = `/api/activities/${activity.activityId}/analysis?model=${encodeURIComponent(selectedModel)}`;
+            if (regenerate) url += '&regenerate=true';
             const res = await fetch(url);
             const data = await res.json();
             clearInterval(timerId);
 
             if (res.ok && data.analysis) {
                 const html = renderAnalysisHtml(data.analysis);
+                const usedModel = data.model || selectedModel;
                 const cachedBadge = data.cached
                     ? `<span style="font-size:0.75rem; background:#e0f2fe; color:#0369a1; padding:2px 8px; border-radius:10px; margin-left:8px;">✅ 保存済み</span>`
                     : `<span style="font-size:0.75rem; background:#f0fdf4; color:#166534; padding:2px 8px; border-radius:10px; margin-left:8px;">✨ 新規生成</span>`;
+                const modelBadge = `<span style="font-size:0.75rem; background:#f3e8ff; color:#7c3aed; padding:2px 8px; border-radius:10px;">🤖 ${usedModel}</span>`;
                 aiContent.innerHTML = `
-                    <div style="display:flex; align-items:center; margin-bottom:10px; gap:8px;">
+                    <div style="display:flex; align-items:center; margin-bottom:10px; gap:8px; flex-wrap:wrap;">
+                        ${modelBadge}
                         ${cachedBadge}
                         <button id="btn-regenerate-ai" style="margin-left:auto; background:#8b5cf6; color:white; border:none; padding:5px 12px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">🔄 再生成</button>
                     </div>
