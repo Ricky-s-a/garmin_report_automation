@@ -602,12 +602,13 @@ function renderTrends(period) {
     trendPaceHRChart = new Chart(ctx3, {
         type: 'line',
         data: {
-            labels,
+            labels: displayLabels,
             datasets: [
                 { label: 'Avg Heart Rate (bpm)', data: hrAverages, borderColor: '#ef4444', backgroundColor: '#ef4444', yAxisID: 'y', tension: 0.3, spanGaps: true },
                 { label: 'Avg Pace (min/km)', data: paceMinsPerKm, borderColor: '#10b981', backgroundColor: '#10b981', yAxisID: 'y1', tension: 0.3, spanGaps: true }
             ]
         },
+
         options: {
             responsive: true, maintainAspectRatio: false,
             interaction: { mode: 'index', intersect: false },
@@ -662,7 +663,7 @@ function renderTrends(period) {
     trendTeChart = new Chart(ctx6, {
         type: 'bar',
         data: {
-            labels,
+            labels: displayLabels,
             datasets: [
                 { label: '有酸素 TE', data: aerobicTeAvg, backgroundColor: '#3b82f6', borderRadius: 4 },
                 { label: '無酸素 TE', data: anaerobicTeAvg, backgroundColor: '#f97316', borderRadius: 4 }
@@ -681,7 +682,7 @@ function renderTrends(period) {
     trendCadenceChart = new Chart(ctx7, {
         type: 'line',
         data: {
-            labels,
+            labels: displayLabels,
             datasets: [
                 { label: 'Avg Cadence (spm)', data: cadenceAverages, borderColor: '#6366f1', fill: false, tension: 0.3, spanGaps: true, yAxisID: 'y' },
                 { label: 'Avg Stride Length (m)', data: strideAverages, borderColor: '#f59e0b', fill: false, tension: 0.3, spanGaps: true, yAxisID: 'y1' }
@@ -715,7 +716,7 @@ function renderTrends(period) {
     trendFormChart = new Chart(ctx8, {
         type: 'line',
         data: {
-            labels,
+            labels: displayLabels,
             datasets: [
                 { label: '上下動 (cm)', data: vertOscAvg, borderColor: '#14b8a6', backgroundColor: 'rgba(20,184,166,0.1)', fill: true, tension: 0.3, spanGaps: true, yAxisID: 'y', pointRadius: 3 },
                 { label: '接地時間 (ms)', data: gctAvg, borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.1)', fill: true, tension: 0.3, spanGaps: true, yAxisID: 'y1', pointRadius: 3 }
