@@ -534,11 +534,12 @@ function renderTrends(period) {
     const labels = Object.keys(grouped);
 
     // Human-readable display labels
-    // weekly: "2025-04-07" → "4/7〜"  monthly: "2025-04" → "25/4月"  yearly: as-is
+    // weekly: "2025-04-07" → "25/4/7〜"  monthly: "2025-04" → "25/4月"  yearly: as-is
     const displayLabels = labels.map(k => {
         if (period === 'weekly') {
             const parts = k.split('-');
-            return `${parseInt(parts[1])}/${parseInt(parts[2])}〜`;
+            const yy = parts[0].slice(2); // 2-digit year
+            return `${yy}/${parseInt(parts[1])}/${parseInt(parts[2])}〜`;
         } else if (period === 'monthly') {
             const parts = k.split('-');
             return `${parts[0].slice(2)}/${parseInt(parts[1])}月`;
