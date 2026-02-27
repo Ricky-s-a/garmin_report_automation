@@ -1,0 +1,32 @@
+# 重要なシークレット情報をコンテナに含めないようにします（GCP Secret Managerを使用）
+.env
+.env.*
+
+# Pythonのキャッシュやバイナリファイル
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# 仮想環境
+env/
+venv/
+.venv/
+env.bak/
+venv.bak/
+
+# 開発用・Git関連のファイル
+.git/
+.github/
+.vscode/
+.idea/
+
+# データファイル・出力結果（DBから取得したり、ストレージに保存するためコンテナには含めない）
+*.csv
+data/
+report_output.md
+
+# OS依存のファイル
+.DS_Store
+Thumbs.db
