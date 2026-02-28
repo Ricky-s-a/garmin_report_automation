@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from src.garmin import fetch_garmin_data, get_supabase_client
+from src.crypto_utils import encrypt_password, decrypt_password
 
 load_dotenv()
 
@@ -24,24 +25,130 @@ os.makedirs("dashboard/static", exist_ok=True)
 # Mount static files for the frontend
 app.mount("/static", StaticFiles(directory="dashboard/static"), name="static")
 
+@app.get("/api/config")
+def get_config():
+    # Only return public/anon key needed for frontend auth
+    url = os.environ.get("SUPABASE_URL", "")
+    key = os.environ.get("SUPABASE_KEY", "")
+    
+    # Strip whitespace and potential Windows PowerShell BOM characters (\ufeff)
+    url = url.strip().strip('\ufeff')
+    key = key.strip().strip('\ufeff')
+    
+    return {
+        "supabase_url": url,
+        "supabase_anon_key": key
+    }
+
 @app.get("/", response_class=HTMLResponse)
 async def serve_index():
     with open("dashboard/static/index.html", "r", encoding="utf-8") as f:
         return f.read()
 
-@app.post("/api/sync")
-def sync_data():
+class SyncRequest(BaseModel):
+    user_id: str
+    email: str = None
+    password: str = None
+
+class CredentialRequest(BaseModel):
+    user_id: str
+    garmin_email: str
+    garmin_password: str
+    runner_profile: str = ""
+
+class TrailPresetsRequest(BaseModel):
+    user_id: str
+    trail_presets: dict
+
+@app.post("/api/garmin-credentials")
+def save_credentials(req: CredentialRequest):
     try:
-        activities = fetch_garmin_data()
+        supabase = get_supabase_client()
+        enc_pass = encrypt_password(req.garmin_password)
+        data = {
+            "user_id": req.user_id,
+            "garmin_email": req.garmin_email,
+            "garmin_password_encrypted": enc_pass,
+            "runner_profile": req.runner_profile
+        }
+        # Upsert: check if exists
+        existing = supabase.table("user_profiles").select("*").eq("user_id", req.user_id).execute()
+        if existing.data:
+            supabase.table("user_profiles").update(data).eq("user_id", req.user_id).execute()
+        else:
+            supabase.table("user_profiles").insert(data).execute()
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/garmin-credentials")
+def get_credentials(user_id: str):
+    try:
+        supabase = get_supabase_client()
+        existing = supabase.table("user_profiles").select("garmin_email,runner_profile").eq("user_id", user_id).execute()
+        if existing.data and len(existing.data) > 0:
+            return {
+                "garmin_email": existing.data[0].get("garmin_email", ""),
+                "runner_profile": existing.data[0].get("runner_profile", "")
+            }
+        return {"garmin_email": "", "runner_profile": ""}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/trail-presets")
+def save_trail_presets(req: TrailPresetsRequest):
+    try:
+        supabase = get_supabase_client()
+        data = {"trail_presets": req.trail_presets}
+        existing = supabase.table("user_profiles").select("user_id").eq("user_id", req.user_id).execute()
+        if existing.data:
+            supabase.table("user_profiles").update(data).eq("user_id", req.user_id).execute()
+        else:
+            data["user_id"] = req.user_id
+            supabase.table("user_profiles").insert(data).execute()
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/trail-presets")
+def get_trail_presets(user_id: str):
+    try:
+        supabase = get_supabase_client()
+        existing = supabase.table("user_profiles").select("trail_presets").eq("user_id", user_id).execute()
+        if existing.data and len(existing.data) > 0:
+            return existing.data[0].get("trail_presets") or {}
+        return {}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/sync")
+def sync_data(req: SyncRequest):
+    try:
+        email = req.email
+        password = req.password
+        
+        # If not provided directly (frontend MVP), lookup from DB
+        if not email or not password:
+            supabase = get_supabase_client()
+            profile = supabase.table("user_profiles").select("*").eq("user_id", req.user_id).execute()
+            if not profile.data:
+                raise ValueError("Garmin credentials not found for this user. Please save them first.")
+            email = profile.data[0]["garmin_email"]
+            password = decrypt_password(profile.data[0]["garmin_password_encrypted"])
+            
+        activities = fetch_garmin_data(email=email, password=password, user_id=req.user_id)
         return {"status": "success", "fetched": len(activities)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/activities")
-def get_activities():
+def get_activities(user_id: str = None):
     try:
         supabase = get_supabase_client()
-        response = supabase.table("activities").select("*").execute()
+        query = supabase.table("activities").select("*")
+        if user_id:
+            query = query.eq("user_id", user_id)
+        response = query.execute()
     except Exception as e:
         return []
     
@@ -195,6 +302,16 @@ def get_activity_analysis(activity_id: str, regenerate: bool = False, model: str
     description = activity.get('description', '')
     notes_str = f"\n【ランナー自身のメモ・感想】\n{description.strip()}" if description and description.strip() else ""
     
+    runner_profile_str = "最近はベース構築をメインに行っており、将来的にはMt.Fuji Kai 70kのような長距離レースに参加したいと考えている。"
+    try:
+        user_id_for_profile = activity.get("user_id")
+        if user_id_for_profile:
+            profile_resp = supabase.table("user_profiles").select("runner_profile").eq("user_id", user_id_for_profile).execute()
+            if profile_resp.data and profile_resp.data[0].get("runner_profile"):
+                runner_profile_str = profile_resp.data[0]["runner_profile"]
+    except Exception as e:
+        print(f"Error fetching runner profile: {e}")
+
     user_content = f"""本日のランニングデータ:
 名前: {activity.get('activityName', 'Running')}
 距離: {dist_km:.2f} km
@@ -214,7 +331,7 @@ def get_activity_analysis(activity_id: str, regenerate: bool = False, model: str
 
 {gpx_summary}
 
-ユーザーの現状: 最近はベース構築をメインに行っており、将来的にはMt.Fuji Kai 70kのような長距離レースに参加したいと考えている。
+ユーザーの現状 (AIへの共有事項): {runner_profile_str}
 
 上記のデータを評価し、アドバイスをお願いします。
 特に以下の点を含めた分析をお願いします：

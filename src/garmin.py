@@ -6,13 +6,13 @@ from garminconnect import Garmin
 from supabase import create_client, Client
 
 def get_supabase_client() -> Client:
-    url = os.environ.get("SUPABASE_URL")
-    key = os.environ.get("SUPABASE_KEY")
+    url = os.environ.get("SUPABASE_URL", "").strip().strip('\ufeff')
+    key = os.environ.get("SUPABASE_KEY", "").strip().strip('\ufeff')
     if not url or not key:
         raise ValueError("Supabase credentials not found. Check SUPABASE_URL and SUPABASE_KEY in .env")
     return create_client(url, key)
 
-def parse_gpx_to_supabase(gpx_path: str, activity_id: str, supabase: Client):
+def parse_gpx_to_supabase(gpx_path: str, activity_id: str, supabase: Client, user_id: str = 'default_user'):
     """Parse a downloaded GPX file and append its track points to Supabase."""
     ns = {
         'default': 'http://www.topografix.com/GPX/1/1',
@@ -57,6 +57,7 @@ def parse_gpx_to_supabase(gpx_path: str, activity_id: str, supabase: Client):
                 pt = {
                     'activityId': str(activity_id),
                     'time': time_str,
+                    'user_id': user_id,
                 }
                 if lat_str: pt['latitude'] = float(lat_str)
                 if lon_str: pt['longitude'] = float(lon_str)
@@ -69,6 +70,9 @@ def parse_gpx_to_supabase(gpx_path: str, activity_id: str, supabase: Client):
     if not points:
         return
         
+    # Downsample points for multi-user MVP (1/5th to save DB cost)
+    points = points[::5]
+        
     # Insert in batches to avoid payload size limits
     batch_size = 500
     for i in range(0, len(points), batch_size):
@@ -78,10 +82,15 @@ def parse_gpx_to_supabase(gpx_path: str, activity_id: str, supabase: Client):
         except Exception as e:
             logging.error(f"Failed to insert GPX batch for activity {activity_id}: {e}")
 
-def fetch_garmin_data() -> list:
+def fetch_garmin_data(email: str = None, password: str = None, user_id: str = None) -> list:
     """Fetch Garmin activities, generate Supabase records and GPX detail points."""
-    email = os.environ.get("GARMIN_EMAIL")
-    password = os.environ.get("GARMIN_PASSWORD")
+    if not email:
+        email = os.environ.get("GARMIN_EMAIL")
+    if not password:
+        password = os.environ.get("GARMIN_PASSWORD")
+    
+    if not user_id:
+        user_id = email if email else 'default_user'
     
     logging.info("Initializing Garmin client...")
     client = Garmin(email, password)
@@ -95,7 +104,7 @@ def fetch_garmin_data() -> list:
     # Read existing records from Supabase (ID + title + notes) to detect updates
     existing_records = {}  # activityId -> {activityName, description}
     try:
-        response = supabase.table("activities").select("activityId,activityName,description").execute()
+        response = supabase.table("activities").select("activityId,activityName,description").eq("user_id", user_id).execute()
         for row in response.data:
             existing_records[str(row['activityId'])] = {
                 'activityName': row.get('activityName', ''),
@@ -159,6 +168,7 @@ def fetch_garmin_data() -> list:
                     row_data[k] = val
                     
             try:
+                row_data["user_id"] = user_id
                 supabase.table("activities").insert(row_data).execute()
                 existing_ids.add(act_id)
                 new_records += 1
@@ -172,7 +182,7 @@ def fetch_garmin_data() -> list:
                 gpx_path = os.path.join(gpx_dir, f"{act_id}.gpx")
                 with open(gpx_path, "wb") as gpx_file:
                     gpx_file.write(gpx_data)
-                parse_gpx_to_supabase(gpx_path, act_id, supabase)
+                parse_gpx_to_supabase(gpx_path, act_id, supabase, user_id)
             except Exception as e:
                 logging.warning(f"Could not download or parse GPX for activity {act_id}: {e}")
 
