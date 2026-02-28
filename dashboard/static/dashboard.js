@@ -2,17 +2,73 @@
 let polyline;
 let analysisChart;
 let trendChart;
-let trendPaceHRChart;
-let trendCadenceChart;
 let trendElevationChart;
+let trendPaceHRChart;
 let trendAeChart;
 let trendVo2Chart;
 let trendTeChart;
+let trendCadenceChart;
 let trendFormChart;
+// ... other charts ...
 let globalActivities = [];
+let appSupabase;
+let currentUser = null;
+
+// Initialize Supabase from API config
+async function initSupabase() {
+    const res = await fetch('/api/config');
+    const config = await res.json();
+    appSupabase = window.supabase.createClient(config.supabase_url, config.supabase_anon_key);
+
+    // Check initial session
+    const { data: { session } } = await appSupabase.auth.getSession();
+    handleAuthStateChange(session);
+
+    // Listen for auth changes
+    appSupabase.auth.onAuthStateChange(async (event, session) => {
+        console.log("Auth Event:", event, session?.user?.email);
+        handleAuthStateChange(session);
+        // Force settings button visibility for debugging if signed in
+        if (event === 'SIGNED_IN' || event === 'USER_UPDATED') {
+            document.getElementById('auth-logged-out').classList.add('hidden');
+            document.getElementById('auth-logged-in').classList.remove('hidden');
+            if (session?.user) {
+                document.getElementById('user-display-email').textContent = session.user.email;
+            }
+        }
+    });
+}
+
+function handleAuthStateChange(session) {
+    currentUser = session?.user || null;
+    const loggedOutSection = document.getElementById('auth-logged-out');
+    const loggedInSection = document.getElementById('auth-logged-in');
+
+    console.log("Updating UI for user:", currentUser?.email);
+
+    if (currentUser) {
+        if (loggedOutSection) loggedOutSection.classList.add('hidden');
+        if (loggedInSection) {
+            loggedInSection.classList.remove('hidden');
+            loggedInSection.style.display = 'block'; // Force display style
+        }
+        const emailEl = document.getElementById('user-display-email');
+        if (emailEl) emailEl.textContent = currentUser.email;
+        fetchActivities();
+        fetchUserTrailPresets(); // Fetch user-specific presets
+    } else {
+        if (loggedOutSection) loggedOutSection.classList.remove('hidden');
+        if (loggedInSection) loggedInSection.classList.add('hidden');
+        userTrailPresets = {}; // Clear memory on logout
+        updatePresetDropdown();
+    }
+    globalActivities = [];
+    renderSidebar([]);
+}
+
 
 document.addEventListener('DOMContentLoaded', () => {
-    fetchActivities();
+    initSupabase();
     setupNavigation();
 });
 
@@ -106,28 +162,120 @@ function setupNavigation() {
     const syncStatus = document.getElementById('sync-status');
     let syncInterval;
 
+    const btnLoginGoogle = document.getElementById('btn-login-google');
+    const btnLogout = document.getElementById('btn-logout');
+    const btnShowSettings = document.getElementById('btn-show-settings');
+    const btnCloseSettings = document.getElementById('btn-close-settings');
+    const btnSaveCredentials = document.getElementById('btn-save-credentials');
+    const modal = document.getElementById('settings-modal');
+
+    btnLoginGoogle.addEventListener('click', async () => {
+        await appSupabase.auth.signInWithOAuth({
+            provider: 'google',
+            options: {
+                redirectTo: window.location.origin
+            }
+        });
+    });
+
+    btnLogout.addEventListener('click', async () => {
+        await appSupabase.auth.signOut();
+    });
+
+    btnShowSettings.addEventListener('click', async () => {
+        modal.classList.remove('hidden');
+        if (currentUser) {
+            try {
+                const res = await fetch(`/api/garmin-credentials?user_id=${encodeURIComponent(currentUser.id)}`);
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.garmin_email) {
+                        document.getElementById('settings-garmin-email').value = data.garmin_email;
+                        document.getElementById('settings-garmin-password').value = '********'; // Masked password
+                        document.getElementById('settings-runner-profile').value = data.runner_profile || '';
+                        // Optional clear status msg
+                        document.getElementById('settings-status').textContent = '';
+                    }
+                }
+            } catch (e) {
+                console.error("Failed to fetch settings", e);
+            }
+        }
+    });
+    btnCloseSettings.addEventListener('click', () => modal.classList.add('hidden'));
+
+    btnSaveCredentials.addEventListener('click', async () => {
+        const email = document.getElementById('settings-garmin-email').value;
+        const password = document.getElementById('settings-garmin-password').value;
+        const profile = document.getElementById('settings-runner-profile').value;
+        const status = document.getElementById('settings-status');
+
+        if (!email || !password) {
+            status.textContent = "Please fill in all fields.";
+            status.style.color = "red";
+            return;
+        }
+
+        btnSaveCredentials.disabled = true;
+        status.textContent = "Saving...";
+        status.style.color = "#64748b";
+
+        try {
+            const res = await fetch('/api/garmin-credentials', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    user_id: currentUser.id,
+                    garmin_email: email,
+                    garmin_password: password,
+                    runner_profile: profile
+                })
+            });
+            if (res.ok) {
+                status.textContent = "Settings saved successfully!";
+                status.style.color = "green";
+                setTimeout(() => modal.classList.add('hidden'), 1500);
+            } else {
+                status.textContent = "Error saving settings.";
+                status.style.color = "red";
+            }
+        } catch (e) {
+            status.textContent = "Error: " + e.message;
+            status.style.color = "red";
+        } finally {
+            btnSaveCredentials.disabled = false;
+        }
+    });
+
     if (btnSync) {
         btnSync.addEventListener('click', async () => {
+            if (!currentUser) {
+                alert("Please login first.");
+                return;
+            }
             btnSync.disabled = true;
             syncStatus.style.display = 'block';
             syncStatus.style.color = '#64748b';
             syncStatus.textContent = '';
 
-            // show spinner
             btnSync.innerHTML = `<span class="ai-spinner" style="border-color: rgba(255,255,255,0.3); border-top-color: white;"></span> Syncing... <span id="sync-timer">0.0s</span>`;
 
             const startTime = Date.now();
             syncInterval = setInterval(() => {
                 const elapsed = (Date.now() - startTime) / 1000;
                 const timerEl = document.getElementById('sync-timer');
-                if (timerEl) {
-                    timerEl.textContent = elapsed.toFixed(1) + 's';
-                }
+                if (timerEl) timerEl.textContent = elapsed.toFixed(1) + 's';
             }, 100);
 
             try {
-                const response = await fetch('/api/sync', { method: 'POST' });
+                const response = await fetch('/api/sync', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user_id: currentUser.id })
+                });
                 const data = await response.json();
+                // ... handle response ...
+
 
                 if (response.ok) {
                     syncStatus.style.color = '#10b981';
@@ -171,14 +319,17 @@ function speedToPace(speedMs) {
 
 // Fetch Master List
 async function fetchActivities() {
+    if (!currentUser) return;
     try {
-        const response = await fetch('/api/activities');
+        const url = `/api/activities?user_id=${encodeURIComponent(currentUser.id)}`;
+        const response = await fetch(url);
         globalActivities = await response.json();
         renderSidebar(globalActivities);
     } catch (e) {
         console.error("Failed to load activities", e);
     }
 }
+
 
 // Render Sidebar List
 function renderSidebar(activities) {
@@ -856,7 +1007,7 @@ let trailRegressionModel = { a: 0, b: 0 }; // Pace = a * Elev/km + b
 let trailDataPoints = [];
 let trailChartInstance = null;
 
-const trailPresets = {
+const defaultTrailPresets = {
     "kumotori": { name: "雲取山", dist: 20, elev: 1400 },
     "hirubiston": { name: "ヒルビストン", dist: 25, elev: 2469 },
     "tanzawa": { name: "丹沢ケルベロス", dist: 30, elev: 2500 },
@@ -866,11 +1017,123 @@ const trailPresets = {
     "mtfuji": { name: "Mt.Fuji Kai", dist: 70, elev: 3400 }
 };
 
+let userTrailPresets = {}; // Loaded from DB
+
+async function fetchUserTrailPresets() {
+    if (!currentUser) return;
+    try {
+        const res = await fetch(`/api/trail-presets?user_id=${encodeURIComponent(currentUser.id)}`);
+        if (res.ok) {
+            userTrailPresets = await res.json() || {};
+            updatePresetDropdown();
+        }
+    } catch (e) {
+        console.error("Failed to load trail presets", e);
+    }
+}
+
+async function saveUserTrailPresets() {
+    if (!currentUser) return;
+    try {
+        await fetch('/api/trail-presets', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                user_id: currentUser.id,
+                trail_presets: userTrailPresets
+            })
+        });
+    } catch (e) {
+        console.error("Failed to save trail presets", e);
+    }
+}
+
+function getMergedPresets() {
+    return { ...defaultTrailPresets, ...userTrailPresets };
+}
+
+function updatePresetDropdown() {
+    const select = document.getElementById('trail-presets');
+    if (!select) return;
+    select.innerHTML = '<option value="">-- 手動で入力 --</option>';
+    const merged = getMergedPresets();
+    for (const key in merged) {
+        let opt = document.createElement('option');
+        opt.value = key;
+        opt.textContent = `${merged[key].name} (${merged[key].dist}km, ${merged[key].elev}m)`;
+        select.appendChild(opt);
+    }
+}
+
+// init dropdown
+updatePresetDropdown();
+
+// Modal logic
+const presetModal = document.getElementById('presets-modal');
+document.getElementById('btn-edit-presets')?.addEventListener('click', () => {
+    presetModal.classList.remove('hidden');
+    renderPresetList();
+});
+
+document.getElementById('btn-close-preset-modal')?.addEventListener('click', () => {
+    presetModal.classList.add('hidden');
+    updatePresetDropdown();
+});
+
+function renderPresetList() {
+    const list = document.getElementById('preset-list');
+    list.innerHTML = '';
+    const merged = getMergedPresets();
+    for (const key in merged) {
+        const div = document.createElement('div');
+        div.style = "display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; border-bottom: 1px solid #f1f5f9; padding-bottom: 4px;";
+
+        const isCustom = userTrailPresets.hasOwnProperty(key);
+
+        div.innerHTML = `
+            <span style="font-size: 0.9rem;">${merged[key].name} <span style="font-size: 0.8rem; color: #64748b;">(${merged[key].dist}km, ${merged[key].elev}m)</span></span>
+            ${isCustom ? `<button onclick="deletePreset('${key}')" style="background: none; border: none; color: #ef4444; cursor: pointer; font-size: 1.1rem; padding: 2px;">❌</button>` : `<span style="font-size:0.75rem; color:#94a3b8; padding: 2px;">デフォルト</span>`}
+        `;
+        list.appendChild(div);
+    }
+}
+
+window.deletePreset = async function (key) {
+    if (confirm('本当に削除しますか？')) {
+        delete userTrailPresets[key];
+        renderPresetList();
+        updatePresetDropdown();
+        await saveUserTrailPresets();
+    }
+};
+
+document.getElementById('btn-add-preset')?.addEventListener('click', () => {
+    const name = document.getElementById('new-preset-name').value.trim();
+    const dist = parseFloat(document.getElementById('new-preset-dist').value);
+    const elev = parseFloat(document.getElementById('new-preset-elev').value);
+
+    if (!name || isNaN(dist) || isNaN(elev)) {
+        alert('レース名、距離(km)、上昇高度(m)を正しく入力してください。');
+        return;
+    }
+
+    const id = 'custom_' + Date.now();
+    userTrailPresets[id] = { name, dist, elev };
+
+    document.getElementById('new-preset-name').value = '';
+    document.getElementById('new-preset-dist').value = '';
+    document.getElementById('new-preset-elev').value = '';
+    renderPresetList();
+    updatePresetDropdown();
+    saveUserTrailPresets();
+});
+
 document.getElementById('trail-presets').addEventListener('change', (e) => {
     const val = e.target.value;
-    if (val && trailPresets[val]) {
-        document.getElementById('trail-target-dist').value = trailPresets[val].dist;
-        document.getElementById('trail-target-elev').value = trailPresets[val].elev;
+    const merged = getMergedPresets();
+    if (val && merged[val]) {
+        document.getElementById('trail-target-dist').value = merged[val].dist;
+        document.getElementById('trail-target-elev').value = merged[val].elev;
     }
     calculateTrailTime();
 });
@@ -893,13 +1156,13 @@ function renderTrailCalculator() {
         if (distKm < 1 || !act.duration) return false;
 
         const nameLower = (act.activityName || '').toLowerCase();
-        const isTrailName = nameLower.includes('トレラン') || nameLower.includes('trail') || nameLower.includes('トレイル');
         const isHilly = (elevM / distKm) >= minElev;
 
         const paceSecKm = act.duration / distKm;
         const paceMinKm = paceSecKm / 60;
 
-        if (paceMinKm <= maxPaceMinKm && (isTrailName || isHilly)) {
+        // フィルター条件を厳密に適用（指定された上昇高度とペースを満たしているか）
+        if (paceMinKm <= maxPaceMinKm && isHilly) {
             // Plot x = Elev/Km, y = pace in sec/km
             const x = elevM / distKm;
             const paceSecKm = act.duration / distKm;

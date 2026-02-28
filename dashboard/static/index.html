@@ -10,6 +10,8 @@
         rel="stylesheet">
     <!-- Custom Styles -->
     <link rel="stylesheet" href="/static/style.css?v=2">
+    <!-- Supabase JS -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 
 <body>
@@ -29,6 +31,27 @@
                         title="Toggle Menu">▲</button>
                 </div>
                 <div id="sidebar-header-content" style="margin-top: 10px;">
+                    <!-- Auth Section -->
+                    <div id="auth-section"
+                        style="margin-bottom: 15px; padding: 10px; background: #e2e8f0; border-radius: 6px;">
+                        <div id="auth-logged-out">
+                            <button id="btn-login-google" class="btn"
+                                style="width: 100%; background: #ffffff; color: #334155; border: 1px solid #cbd5e1; margin-bottom: 8px;">Login
+                                with Google</button>
+                            <p style="font-size: 0.7rem; color: #64748b; text-align: center;">or use local test mode</p>
+                        </div>
+                        <div id="auth-logged-in" class="hidden">
+                            <p id="user-display-email"
+                                style="font-size: 0.85rem; font-weight: 600; color: #1e293b; margin-bottom: 8px; overflow: hidden; text-overflow: ellipsis;">
+                            </p>
+                            <div style="display: flex; gap: 4px;">
+                                <button id="btn-show-settings" class="btn"
+                                    style="flex: 1; padding: 4px; font-size: 0.75rem; background: #94a3b8;">Settings</button>
+                                <button id="btn-logout" class="btn"
+                                    style="flex: 1; padding: 4px; font-size: 0.75rem; background: #f87171;">Logout</button>
+                            </div>
+                        </div>
+                    </div>
                     <button id="btn-sync" class="btn"
                         style="width: 100%; margin-bottom: 10px; background: #0ea5e9; color: white; border: none; padding: 8px; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px;">🔄
                         Sync with Garmin</button>
@@ -276,17 +299,15 @@
                         <label
                             style="font-weight: 500; font-size: 0.9rem; color: #64748b; display: block; margin-bottom: 4px;">Preset
                             Races</label>
-                        <select id="trail-presets"
-                            style="padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 1rem; width: 100%; max-width: 300px;">
-                            <option value="">-- 手動で入力 --</option>
-                            <option value="kumotori">雲取山 (20km, 1400m)</option>
-                            <option value="hirubiston">ヒルビストン (25km, 2469m)</option>
-                            <option value="tanzawa">丹沢ケルベロス (30km, 2500m)</option>
-                            <option value="takao">高尾マンモス (35km, 2000m)</option>
-                            <option value="tarasaru">トラサル (40km, 2800m)</option>
-                            <option value="gaireen">ガイリーン (50km, 3000m)</option>
-                            <option value="mtfuji">Mt.Fuji Kai (70km, 3400m)</option>
-                        </select>
+                        <div style="display: flex; gap: 8px; align-items: center; max-width: 400px;">
+                            <select id="trail-presets"
+                                style="padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 1rem; width: 100%; flex: 1;">
+                                <option value="">-- 手動で入力 --</option>
+                            </select>
+                            <button id="btn-edit-presets" class="btn"
+                                style="background: #94a3b8; color: white; border: none; padding: 10px 14px; border-radius: 6px; cursor: pointer;">⚙️
+                                編集</button>
+                        </div>
                     </div>
 
                     <div style="display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap;">
@@ -361,10 +382,70 @@
         </main>
     </div>
 
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="modal hidden">
+        <div class="modal-content">
+            <h3>Garmin Connection Settings</h3>
+            <p style="font-size: 0.85rem; color: #64748b; margin-bottom: 15px;">Your password will be encrypted before
+                being stored.</p>
+            <div style="display: flex; flex-direction: column; gap: 12px;">
+                <div>
+                    <label style="font-size: 0.85rem; font-weight: 600;">Garmin Email</label>
+                    <input type="email" id="settings-garmin-email"
+                        style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px; margin-top: 4px;">
+                </div>
+                <div>
+                    <label style="font-size: 0.85rem; font-weight: 600;">Garmin Password</label>
+                    <input type="password" id="settings-garmin-password"
+                        style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px; margin-top: 4px;">
+                </div>
+                <div>
+                    <label style="font-size: 0.85rem; font-weight: 600;">AI Context / Runner Profile</label>
+                    <textarea id="settings-runner-profile" rows="3"
+                        placeholder="e.g. Training for Mt. Fuji 70k, focus is HR zone 2."
+                        style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px; margin-top: 4px; resize: vertical; font-family: inherit; font-size: 0.85rem;"></textarea>
+                </div>
+                <div style="display: flex; gap: 10px; margin-top: 10px;">
+                    <button id="btn-save-credentials" class="btn" style="flex: 2; background: #10b981;">Save
+                        Settings</button>
+                    <button id="btn-close-settings" class="btn" style="flex: 1; background: #94a3b8;">Close</button>
+                </div>
+                <div id="settings-status" style="font-size: 0.8rem; text-align: center;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Presets Edit Modal -->
+    <div id="presets-modal" class="modal hidden">
+        <div class="modal-content" style="max-width: 400px;">
+            <h3>レースプリセットの編集</h3>
+            <p style="font-size: 0.82rem; color: #64748b; margin-bottom: 12px;">追加したレースはブラウザに保存されます。</p>
+
+            <div id="preset-list"
+                style="max-height: 200px; overflow-y: auto; margin-bottom: 15px; border: 1px solid #e2e8f0; border-radius: 4px; padding: 8px;">
+                <!-- list of presets generated by JS -->
+            </div>
+
+            <div style="display: flex; gap: 8px; margin-bottom: 16px;">
+                <input type="text" id="new-preset-name" placeholder="レース名"
+                    style="flex: 2; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
+                <input type="number" id="new-preset-dist" placeholder="km"
+                    style="flex: 1; min-width: 50px; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
+                <input type="number" id="new-preset-elev" placeholder="D+ m"
+                    style="flex: 1; min-width: 60px; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
+                <button id="btn-add-preset" class="btn"
+                    style="background: #10b981; color: white; padding: 8px; border-radius: 4px;">追加</button>
+            </div>
+            <div style="display: flex; gap: 10px;">
+                <button id="btn-close-preset-modal" class="btn" style="width: 100%; background: #94a3b8;">閉じる</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
-    <script src="/static/script.js?v=9"></script>
+    <script src="/static/dashboard.js?v=17"></script>
 </body>
 
 </html>
