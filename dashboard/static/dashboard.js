@@ -28,14 +28,6 @@ async function initSupabase() {
     appSupabase.auth.onAuthStateChange(async (event, session) => {
         console.log("Auth Event:", event, session?.user?.email);
         handleAuthStateChange(session);
-        // Force settings button visibility for debugging if signed in
-        if (event === 'SIGNED_IN' || event === 'USER_UPDATED') {
-            document.getElementById('auth-logged-out').classList.add('hidden');
-            document.getElementById('auth-logged-in').classList.remove('hidden');
-            if (session?.user) {
-                document.getElementById('user-display-email').textContent = session.user.email;
-            }
-        }
     });
 }
 
@@ -52,13 +44,35 @@ function handleAuthStateChange(session) {
             loggedInSection.classList.remove('hidden');
             loggedInSection.style.display = 'block'; // Force display style
         }
+
+        const metadata = currentUser.user_metadata || {};
+        const nameEl = document.getElementById('user-display-name');
         const emailEl = document.getElementById('user-display-email');
+        const avatarImg = document.getElementById('user-avatar');
+
+        if (nameEl) nameEl.textContent = metadata.full_name || currentUser.email.split('@')[0];
         if (emailEl) emailEl.textContent = currentUser.email;
+        if (avatarImg && metadata.avatar_url) {
+            avatarImg.src = metadata.avatar_url;
+            avatarImg.style.display = 'block';
+        }
+
         fetchActivities();
         fetchUserTrailPresets(); // Fetch user-specific presets
     } else {
         if (loggedOutSection) loggedOutSection.classList.remove('hidden');
         if (loggedInSection) loggedInSection.classList.add('hidden');
+
+        const nameEl = document.getElementById('user-display-name');
+        const emailEl = document.getElementById('user-display-email');
+        const avatarImg = document.getElementById('user-avatar');
+        if (nameEl) nameEl.textContent = '';
+        if (emailEl) emailEl.textContent = '';
+        if (avatarImg) {
+            avatarImg.src = '';
+            avatarImg.style.display = 'none';
+        }
+
         userTrailPresets = {}; // Clear memory on logout
         updatePresetDropdown();
     }

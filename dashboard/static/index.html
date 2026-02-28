@@ -41,14 +41,24 @@
                             <p style="font-size: 0.7rem; color: #64748b; text-align: center;">or use local test mode</p>
                         </div>
                         <div id="auth-logged-in" class="hidden">
-                            <p id="user-display-email"
-                                style="font-size: 0.85rem; font-weight: 600; color: #1e293b; margin-bottom: 8px; overflow: hidden; text-overflow: ellipsis;">
-                            </p>
+                            <div
+                                style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px; padding: 4px;">
+                                <img id="user-avatar" src="" alt=""
+                                    style="width: 36px; height: 36px; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.1); display: none;">
+                                <div style="min-width: 0;">
+                                    <p id="user-display-name"
+                                        style="font-size: 0.9rem; font-weight: 700; color: #1e293b; margin: 0; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                                    </p>
+                                    <p id="user-display-email"
+                                        style="font-size: 0.7rem; color: #64748b; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                                    </p>
+                                </div>
+                            </div>
                             <div style="display: flex; gap: 4px;">
                                 <button id="btn-show-settings" class="btn"
-                                    style="flex: 1; padding: 4px; font-size: 0.75rem; background: #94a3b8;">Settings</button>
+                                    style="flex: 1; padding: 6px; font-size: 0.75rem; background: #94a3b8; font-weight: 600;">Settings</button>
                                 <button id="btn-logout" class="btn"
-                                    style="flex: 1; padding: 4px; font-size: 0.75rem; background: #f87171;">Logout</button>
+                                    style="flex: 1; padding: 6px; font-size: 0.75rem; background: #f87171; font-weight: 600;">Logout</button>
                             </div>
                         </div>
                     </div>
@@ -445,7 +455,7 @@
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
-    <script src="/static/dashboard.js?v=17"></script>
+    <script src="/static/dashboard.js?v=18"></script>
 </body>
 
 </html>
