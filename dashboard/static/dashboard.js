@@ -9,10 +9,12 @@ let trendVo2Chart;
 let trendTeChart;
 let trendCadenceChart;
 let trendFormChart;
+let hrZoneChart;
 // ... other charts ...
 let globalActivities = [];
 let appSupabase;
 let currentUser = null;
+let userMaxHr = null;
 
 // Initialize Supabase from API config
 async function initSupabase() {
@@ -57,6 +59,7 @@ function handleAuthStateChange(session) {
             avatarImg.style.display = 'block';
         }
 
+        fetchUserSettings();
         fetchActivities();
         fetchUserTrailPresets(); // Fetch user-specific presets
     } else {
@@ -207,6 +210,7 @@ function setupNavigation() {
                         document.getElementById('settings-garmin-email').value = data.garmin_email;
                         document.getElementById('settings-garmin-password').value = '********'; // Masked password
                         document.getElementById('settings-runner-profile').value = data.runner_profile || '';
+                        document.getElementById('settings-max-hr').value = data.max_hr || '';
                         // Optional clear status msg
                         document.getElementById('settings-status').textContent = '';
                     }
@@ -222,6 +226,8 @@ function setupNavigation() {
         const email = document.getElementById('settings-garmin-email').value;
         const password = document.getElementById('settings-garmin-password').value;
         const profile = document.getElementById('settings-runner-profile').value;
+        const maxHrStr = document.getElementById('settings-max-hr').value;
+        const mhr = maxHrStr ? parseInt(maxHrStr) : null;
         const status = document.getElementById('settings-status');
 
         if (!email || !password) {
@@ -242,11 +248,13 @@ function setupNavigation() {
                     user_id: currentUser.id,
                     garmin_email: email,
                     garmin_password: password,
-                    runner_profile: profile
+                    runner_profile: profile,
+                    max_hr: mhr
                 })
             });
             if (res.ok) {
                 status.textContent = "Settings saved successfully!";
+                userMaxHr = mhr; // update locally
                 status.style.color = "green";
                 setTimeout(() => modal.classList.add('hidden'), 1500);
             } else {
@@ -260,6 +268,43 @@ function setupNavigation() {
             btnSaveCredentials.disabled = false;
         }
     });
+
+    const btnDeleteAccount = document.getElementById('btn-delete-account');
+    if (btnDeleteAccount) {
+        btnDeleteAccount.addEventListener('click', async () => {
+            const confirmDelete = confirm("⚠️ 警告: アカウントおよびすべてのランニングデータ(GPX等)が削除されます。この操作は取り消せません。\n本当に削除してよろしいですか？");
+            if (!confirmDelete) return;
+
+            const confirmType = prompt("削除を実行するには 'DELETE' と入力してください:");
+            if (confirmType !== "DELETE") {
+                alert("削除をキャンセルしました。");
+                return;
+            }
+
+            const status = document.getElementById('settings-status');
+            status.textContent = "Deleting account and data...";
+            status.style.color = "red";
+            btnDeleteAccount.disabled = true;
+
+            try {
+                const res = await fetch(`/api/account/${currentUser.id}`, {
+                    method: 'DELETE'
+                });
+                if (res.ok) {
+                    alert("データが正常に削除されました。自動的にサインアウトします。");
+                    await supabase.auth.signOut();
+                    window.location.reload();
+                } else {
+                    const data = await res.json();
+                    status.textContent = "Error: " + (data.detail || "Could not delete account.");
+                    btnDeleteAccount.disabled = false;
+                }
+            } catch (e) {
+                status.textContent = "Error: " + e.message;
+                btnDeleteAccount.disabled = false;
+            }
+        });
+    }
 
     if (btnSync) {
         btnSync.addEventListener('click', async () => {
@@ -329,6 +374,18 @@ function speedToPace(speedMs) {
     const m = Math.floor(minsPerKm);
     const s = Math.floor((minsPerKm - m) * 60).toString().padStart(2, '0');
     return `${m}'${s}" /km`;
+}
+
+// Utility to fetch settings early
+async function fetchUserSettings() {
+    if (!currentUser) return;
+    try {
+        const res = await fetch(`/api/garmin-credentials?user_id=${encodeURIComponent(currentUser.id)}`);
+        if (res.ok) {
+            const data = await res.json();
+            userMaxHr = data.max_hr || null;
+        }
+    } catch (e) { console.error(e); }
 }
 
 // Fetch Master List
@@ -431,7 +488,7 @@ async function loadActivityDetails(activity, allActivities) {
         return html;
     }
 
-    async function runAnalysis(regenerate = false) {
+    async function runAnalysis(regenerate = false, reportType = "short") {
         const selectedModel = document.getElementById('model-select')?.value || 'gemini-2.5-flash';
         const modelLabel = document.getElementById('model-select')?.options[document.getElementById('model-select').selectedIndex]?.text || selectedModel;
 
@@ -442,62 +499,103 @@ async function loadActivityDetails(activity, allActivities) {
             if (timerSpan) timerSpan.textContent = seconds;
         }, 1000);
 
+        const typeLabel = reportType === "short" ? "短文レポート" : "詳細レポート";
         aiContent.innerHTML = `
             <div class="ai-loader-container">
                 <div class="ai-spinner"></div>
                 <div class="ai-loader-text">
-                    Analyzing with <strong>${modelLabel}</strong>... (<span id="ai-timer">0</span>s elapsed)
+                    ${typeLabel}を生成中 (${modelLabel}) ... <span id="ai-timer">0</span>s
                 </div>
             </div>
         `;
 
         try {
-            let url = `/api/activities/${activity.activityId}/analysis?model=${encodeURIComponent(selectedModel)}`;
+            let url = `/api/activities/${activity.activityId}/analysis?model=${encodeURIComponent(selectedModel)}&report_type=${reportType}`;
             if (regenerate) url += '&regenerate=true';
             const res = await fetch(url);
             const data = await res.json();
             clearInterval(timerId);
 
             if (res.ok && data.analysis) {
-                const html = renderAnalysisHtml(data.analysis);
-                const usedModel = data.model || selectedModel;
-                const cachedBadge = data.cached
-                    ? `<span style="font-size:0.75rem; background:#e0f2fe; color:#0369a1; padding:2px 8px; border-radius:10px; margin-left:8px;">✅ 保存済み</span>`
-                    : `<span style="font-size:0.75rem; background:#f0fdf4; color:#166534; padding:2px 8px; border-radius:10px; margin-left:8px;">✨ 新規生成</span>`;
-                const modelBadge = `<span style="font-size:0.75rem; background:#f3e8ff; color:#7c3aed; padding:2px 8px; border-radius:10px;">🤖 ${usedModel}</span>`;
-                aiContent.innerHTML = `
-                    <div style="display:flex; align-items:center; margin-bottom:10px; gap:8px; flex-wrap:wrap;">
-                        ${modelBadge}
-                        ${cachedBadge}
-                        <button id="btn-regenerate-ai" style="margin-left:auto; background:#8b5cf6; color:white; border:none; padding:5px 12px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">🔄 再生成</button>
-                    </div>
-                    <div style="line-height:1.6; font-size:0.95rem; background:white; padding:15px; border-radius:8px; border:1px solid #e2e8f0; color:#334155;">${html}</div>
-                `;
-                document.getElementById('btn-regenerate-ai').addEventListener('click', () => runAnalysis(true));
+                if (reportType === 'short') { activity.aiAnalysisShort = data.analysis; activity.usedModelShort = data.model || selectedModel; }
+                else { activity.aiAnalysis = data.analysis; activity.usedModelLong = data.model || selectedModel; }
+                renderAiSection();
             } else {
                 aiContent.innerHTML = `<p style="color: red;">Error generating analysis: ${data.detail || 'Unknown error'}</p>`;
+                // Re-render after 3 seconds
+                setTimeout(renderAiSection, 3000);
             }
         } catch (e) {
             clearInterval(timerId);
             aiContent.innerHTML = `<p style="color: red;">Error: ${e.message}</p>`;
+            setTimeout(renderAiSection, 3000);
         }
     }
 
-    // Check if cached analysis exists on the activity object
-    if (activity.aiAnalysis) {
-        const html = renderAnalysisHtml(activity.aiAnalysis);
-        aiContent.innerHTML = `
-            <div style="display:flex; align-items:center; margin-bottom:10px; gap:8px;">
-                <span style="font-size:0.75rem; background:#e0f2fe; color:#0369a1; padding:2px 8px; border-radius:10px;">✅ 保存済み</span>
-                <button id="btn-regenerate-ai" style="margin-left:auto; background:#8b5cf6; color:white; border:none; padding:5px 12px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">🔄 再生成</button>
-            </div>
-            <div style="line-height:1.6; font-size:0.95rem; background:white; padding:15px; border-radius:8px; border:1px solid #e2e8f0; color:#334155;">${html}</div>
-        `;
-        document.getElementById('btn-regenerate-ai').addEventListener('click', () => runAnalysis(true));
-    } else {
-        aiContent.innerHTML = `<button id="btn-generate-ai" class="btn" style="background:#8b5cf6; color:white; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; font-weight:600;">Generate AI Analysis</button>`;
-        document.getElementById('btn-generate-ai').addEventListener('click', () => runAnalysis(false));
+    function renderAiSection() {
+        let htmlContent = '';
+
+        // Short form UI
+        if (activity.aiAnalysisShort) {
+            const usedModel = activity.usedModelShort || 'gemini-2.5-flash';
+            const html = renderAnalysisHtml(activity.aiAnalysisShort);
+            htmlContent += `
+                <div style="margin-bottom: 20px;">
+                    <div style="display:flex; align-items:center; margin-bottom:8px; gap:8px; flex-wrap:wrap;">
+                        <span style="font-weight:700; font-size:0.95rem; color:#1e293b;">📌 短文レポート (Strava風)</span>
+                        <span style="font-size:0.75rem; background:#f3e8ff; color:#7c3aed; padding:2px 8px; border-radius:10px;">🤖 ${usedModel}</span>
+                        <button id="btn-regen-short" style="margin-left:auto; background:#10b981; color:white; border:none; padding:5px 12px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">🔄 再生成</button>
+                    </div>
+                     <details open style="background: white; border-radius: 8px; border: 1px solid #e2e8f0; overflow: hidden;">
+                        <summary style="cursor: pointer; font-weight: 600; padding: 10px 15px; background: #f8fafc; color: #475569; user-select: none; border-bottom: 1px solid #e2e8f0; list-style-position: inside;">短文レポート (展開/折りたたみ)</summary>
+                        <div style="line-height:1.6; font-size:0.95rem; padding:15px; color:#334155;">${html}</div>
+                    </details>
+                </div>
+            `;
+        } else {
+            htmlContent += `
+                <div style="margin-bottom: 20px;">
+                    <button id="btn-gen-short" style="background:#10b981; color:white; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; font-weight:600; font-size:0.85rem;">✨ 生成 (短文レポート)</button>
+                </div>
+            `;
+        }
+
+        // Long form UI
+        if (activity.aiAnalysis) {
+            const usedModel = activity.usedModelLong || 'gemini-2.5-flash';
+            const html = renderAnalysisHtml(activity.aiAnalysis);
+            htmlContent += `
+                <div style="margin-bottom: 10px;">
+                    <div style="display:flex; align-items:center; margin-bottom:8px; gap:8px; flex-wrap:wrap;">
+                        <span style="font-weight:700; font-size:0.95rem; color:#1e293b;">📑 詳細レポート</span>
+                        <span style="font-size:0.75rem; background:#f3e8ff; color:#7c3aed; padding:2px 8px; border-radius:10px;">🤖 ${usedModel}</span>
+                        <button id="btn-regen-long" style="margin-left:auto; background:#8b5cf6; color:white; border:none; padding:5px 12px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">🔄 再生成</button>
+                    </div>
+                     <details style="background: white; border-radius: 8px; border: 1px solid #e2e8f0; overflow: hidden;">
+                        <summary style="cursor: pointer; font-weight: 600; padding: 10px 15px; background: #f8fafc; color: #475569; user-select: none; border-bottom: 1px solid #e2e8f0; list-style-position: inside;">詳細レポート (展開/折りたたみ)</summary>
+                        <div style="line-height:1.6; font-size:0.95rem; padding:15px; color:#334155;">${html}</div>
+                    </details>
+                </div>
+            `;
+        } else {
+            htmlContent += `
+                <div style="margin-bottom: 10px;">
+                    <button id="btn-gen-long" style="background:#8b5cf6; color:white; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; font-weight:600; font-size:0.85rem;">🧠 生成 (詳細レポート)</button>
+                </div>
+            `;
+        }
+
+        aiContent.innerHTML = htmlContent;
+
+        if (document.getElementById('btn-regen-short')) document.getElementById('btn-regen-short').addEventListener('click', () => runAnalysis(true, 'short'));
+        if (document.getElementById('btn-gen-short')) document.getElementById('btn-gen-short').addEventListener('click', () => runAnalysis(false, 'short'));
+
+        if (document.getElementById('btn-regen-long')) document.getElementById('btn-regen-long').addEventListener('click', () => runAnalysis(true, 'long'));
+        if (document.getElementById('btn-gen-long')) document.getElementById('btn-gen-long').addEventListener('click', () => runAnalysis(false, 'long'));
     }
+
+    // Initial render
+    renderAiSection();
 
     // Update Metrics
     document.getElementById('val-distance').textContent = (activity.distance / 1000).toFixed(2) + ' km';
@@ -511,6 +609,7 @@ async function loadActivityDetails(activity, allActivities) {
         const points = await response.json();
 
         updateChart(points);
+        updateHrZoneChart(points);
     } catch (e) {
         console.error("Failed to load GPX data for activity", e);
     }
@@ -588,6 +687,118 @@ function updateChart(points) {
             },
             plugins: {
                 legend: { labels: { color: '#475569' } }
+            }
+        }
+    });
+}
+
+// Update HR Zone Chart (Time in Zone)
+function updateHrZoneChart(points) {
+    const validPoints = points.filter(p => parseFloat(p.heartRate) > 0);
+    if (validPoints.length < 2) return;
+
+    let timesInZone = [0, 0, 0, 0, 0]; // Z1..Z5 in seconds
+
+    let baseMaxHr = 185; // Default fallback
+    if (userMaxHr && userMaxHr > 0) {
+        baseMaxHr = userMaxHr;
+    } else {
+        // Auto-detect from historical data
+        let detected = 0;
+        globalActivities.forEach(act => {
+            const m = parseFloat(act.maxHR) || 0;
+            if (m > detected) detected = m;
+        });
+        if (detected >= 150) {
+            baseMaxHr = detected;
+        }
+    }
+
+    const z1_top = Math.round(baseMaxHr * 0.60);
+    const z2_top = Math.round(baseMaxHr * 0.70);
+    const z3_top = Math.round(baseMaxHr * 0.80);
+    const z4_top = Math.round(baseMaxHr * 0.90);
+
+    for (let i = 1; i < validPoints.length; i++) {
+        const prev = validPoints[i - 1];
+        const curr = validPoints[i];
+
+        const t1 = new Date(prev.time).getTime();
+        const t2 = new Date(curr.time).getTime();
+        let dt = (t2 - t1) / 1000;
+
+        // Ignore large gaps > 5 mins
+        if (dt > 300 || dt < 0) dt = 0;
+
+        const hr = parseFloat(curr.heartRate);
+
+        if (hr < z1_top) timesInZone[0] += dt;
+        else if (hr < z2_top) timesInZone[1] += dt;
+        else if (hr < z3_top) timesInZone[2] += dt;
+        else if (hr < z4_top) timesInZone[3] += dt;
+        else timesInZone[4] += dt;
+    }
+
+    const z1m = timesInZone[0] / 60;
+    const z2m = timesInZone[1] / 60;
+    const z3m = timesInZone[2] / 60;
+    const z4m = timesInZone[3] / 60;
+    const z5m = timesInZone[4] / 60;
+
+    const ctx = document.getElementById('hrZoneChart').getContext('2d');
+    if (hrZoneChart) {
+        hrZoneChart.destroy();
+    }
+
+    hrZoneChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: [
+                `Z1 回復 (<${z1_top})`,
+                `Z2 有酸素 (${z1_top}-${z2_top - 1})`,
+                `Z3 テンポ (${z2_top}-${z3_top - 1})`,
+                `Z4 閾値 (${z3_top}-${z4_top - 1})`,
+                `Z5 無酸素 (>=${z4_top})`
+            ],
+            datasets: [{
+                label: '滞在時間 (分)',
+                data: [z1m, z2m, z3m, z4m, z5m],
+                backgroundColor: [
+                    '#94a3b8', // Gray
+                    '#3b82f6', // Blue
+                    '#10b981', // Green
+                    '#f59e0b', // Orange
+                    '#ef4444'  // Red
+                ],
+                borderRadius: 4
+            }]
+        },
+        options: {
+            indexAxis: 'y', // Horizontal bars
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: function (c) {
+                            const min = Math.floor(c.raw);
+                            const sec = Math.floor((c.raw - min) * 60);
+                            return `滞在時間: ${min}分${sec.toString().padStart(2, '0')}秒`;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    title: { display: true, text: '時間 (分)', color: '#64748b' },
+                    grid: { color: 'rgba(0,0,0,0.05)' },
+                    ticks: { color: '#64748b' }
+                },
+                y: {
+                    grid: { display: false },
+                    ticks: { color: '#475569', font: { weight: '500' } }
+                }
             }
         }
     });

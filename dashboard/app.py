@@ -55,10 +55,32 @@ class CredentialRequest(BaseModel):
     garmin_email: str
     garmin_password: str
     runner_profile: str = ""
+    max_hr: int = None
 
 class TrailPresetsRequest(BaseModel):
     user_id: str
     trail_presets: dict
+
+@app.delete("/api/account/{user_id}")
+def delete_account(user_id: str):
+    try:
+        supabase = get_supabase_client()
+        # Delete GPX points linked to activities of this user
+        acts = supabase.table("activities").select("activityId").eq("user_id", user_id).execute()
+        if acts.data:
+            for act in acts.data:
+                supabase.table("gpx_points").delete().eq("activityId", act["activityId"]).execute()
+        
+        # Delete Activities
+        supabase.table("activities").delete().eq("user_id", user_id).execute()
+        # Delete Trail Presets
+        supabase.table("trail_presets").delete().eq("user_id", user_id).execute()
+        # Delete Profile
+        supabase.table("user_profiles").delete().eq("user_id", user_id).execute()
+        
+        return {"status": "success", "message": "All data associated with the user has been deleted."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/garmin-credentials")
 def save_credentials(req: CredentialRequest):
@@ -69,7 +91,8 @@ def save_credentials(req: CredentialRequest):
             "user_id": req.user_id,
             "garmin_email": req.garmin_email,
             "garmin_password_encrypted": enc_pass,
-            "runner_profile": req.runner_profile
+            "runner_profile": req.runner_profile,
+            "max_hr": req.max_hr
         }
         # Upsert: check if exists
         existing = supabase.table("user_profiles").select("*").eq("user_id", req.user_id).execute()
@@ -85,13 +108,14 @@ def save_credentials(req: CredentialRequest):
 def get_credentials(user_id: str):
     try:
         supabase = get_supabase_client()
-        existing = supabase.table("user_profiles").select("garmin_email,runner_profile").eq("user_id", user_id).execute()
+        existing = supabase.table("user_profiles").select("garmin_email,runner_profile,max_hr").eq("user_id", user_id).execute()
         if existing.data and len(existing.data) > 0:
             return {
                 "garmin_email": existing.data[0].get("garmin_email", ""),
-                "runner_profile": existing.data[0].get("runner_profile", "")
+                "runner_profile": existing.data[0].get("runner_profile", ""),
+                "max_hr": existing.data[0].get("max_hr")
             }
-        return {"garmin_email": "", "runner_profile": ""}
+        return {"garmin_email": "", "runner_profile": "", "max_hr": None}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -189,7 +213,7 @@ def get_activity_gpx(activity_id: str):
     return df_filtered.to_dict(orient="records")
 
 @app.get("/api/activities/{activity_id}/analysis")
-def get_activity_analysis(activity_id: str, regenerate: bool = False, model: str = "gemini-2.5-flash"):
+def get_activity_analysis(activity_id: str, regenerate: bool = False, model: str = "gemini-2.5-flash", report_type: str = "long"):
     # Allowlist to prevent arbitrary model injection
     ALLOWED_MODELS = {"gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"}
     if model not in ALLOWED_MODELS:
@@ -206,13 +230,15 @@ def get_activity_analysis(activity_id: str, regenerate: bool = False, model: str
     activity = response.data[0]
     
     # Return cached analysis if it exists and regenerate is not requested
-    cached = activity.get("aiAnalysis")
+    cache_field = "aiAnalysisShort" if report_type == "short" else "aiAnalysis"
+    cached = activity.get(cache_field)
     if cached and not regenerate:
         return {"analysis": cached, "cached": True}
     
     # Read system prompt
     base_dir = os.path.dirname(os.path.dirname(__file__))
-    system_prompt_path = os.path.join(base_dir, "prompts", "system_prompt.txt")
+    prompt_filename = "short_prompt.txt" if report_type == "short" else "system_prompt.txt"
+    system_prompt_path = os.path.join(base_dir, "prompts", prompt_filename)
     try:
         with open(system_prompt_path, "r", encoding="utf-8") as f:
             system_instruction = f.read().strip()
@@ -302,9 +328,38 @@ def get_activity_analysis(activity_id: str, regenerate: bool = False, model: str
     description = activity.get('description', '')
     notes_str = f"\n【ランナー自身のメモ・感想】\n{description.strip()}" if description and description.strip() else ""
     
-    runner_profile_str = "最近はベース構築をメインに行っており、将来的にはMt.Fuji Kai 70kのような長距離レースに参加したいと考えている。"
+    past_30_summary = ""
     try:
         user_id_for_profile = activity.get("user_id")
+        current_date_str = activity.get("startTimeLocal")
+        if user_id_for_profile and current_date_str:
+            curr_date = pd.to_datetime(current_date_str, format='mixed', utc=False)
+            if curr_date.tzinfo is not None:
+                curr_date = curr_date.tz_localize(None)
+            past_30 = curr_date - pd.Timedelta(days=30)
+            past_30_iso = past_30.isoformat()
+            
+            history_resp = supabase.table("activities").select("distance,duration,averageSpeed,averageHR").eq("user_id", user_id_for_profile).gte("startTimeLocal", past_30_iso).lt("startTimeLocal", current_date_str).execute()
+            
+            if history_resp.data:
+                h_df = pd.DataFrame(history_resp.data)
+                h_num = len(h_df)
+                h_dist = h_df['distance'].astype(float).sum() / 1000 if 'distance' in h_df else 0
+                past_30_summary = f"\n【過去30日間のトレーニング状況 (本アクティビティは含まず)】\nラン回数: {h_num}回\n合計距離: {h_dist:.1f} km"
+                if h_num > 0:
+                    avg_dur_mins = (h_df['duration'].astype(float).sum() / h_num) / 60
+                    avg_speed = h_df['averageSpeed'].astype(float).mean()
+                    if avg_speed > 0:
+                        mins_per_km = 1000 / avg_speed / 60
+                        pm = int(mins_per_km)
+                        ps = int((mins_per_km - pm) * 60)
+                        past_30_summary += f"\n平均ペース: {pm}:{ps:02d} / km"
+                        past_30_summary += f"\n1回あたりの平均時間: {avg_dur_mins:.0f}分"
+    except Exception as e:
+        print(f"Error fetching 30 days history: {e}")
+
+    runner_profile_str = "最近はベース構築をメインに行っており、将来的にはMt.Fuji Kai 70kのような長距離レースに参加したいと考えている。"
+    try:
         if user_id_for_profile:
             profile_resp = supabase.table("user_profiles").select("runner_profile").eq("user_id", user_id_for_profile).execute()
             if profile_resp.data and profile_resp.data[0].get("runner_profile"):
@@ -330,8 +385,12 @@ def get_activity_analysis(activity_id: str, regenerate: bool = False, model: str
 {notes_str}
 
 {gpx_summary}
+{past_30_summary}
 
-ユーザーの現状 (AIへの共有事項): {runner_profile_str}
+ユーザーの現状 (AIへの共有事項): {runner_profile_str}"""
+
+    if report_type == "long":
+        user_content += """
 
 上記のデータを評価し、アドバイスをお願いします。
 特に以下の点を含めた分析をお願いします：
@@ -358,7 +417,12 @@ def get_activity_analysis(activity_id: str, regenerate: bool = False, model: str
         
         # Save the result back to Supabase for future use
         try:
-            supabase.table("activities").update({"aiAnalysis": analysis_text}).eq("activityId", activity_id).execute()
+            update_data = {}
+            if report_type == "short":
+                update_data["aiAnalysisShort"] = analysis_text
+            else:
+                update_data["aiAnalysis"] = analysis_text
+            supabase.table("activities").update(update_data).eq("activityId", activity_id).execute()
         except Exception as save_err:
             print(f"Warning: failed to cache AI analysis to Supabase: {save_err}")
         
