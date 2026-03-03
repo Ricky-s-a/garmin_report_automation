@@ -80,6 +80,10 @@ def delete_account(user_id: str):
         
         # Delete Activities
         supabase.table("activities").delete().eq("user_id", user_id).execute()
+        # Delete Pace Zone Stats cache
+        supabase.table("pace_zone_stats").delete().eq("user_id", user_id).execute()
+        # Delete Rolling Stats cache
+        supabase.table("activity_rolling_stats").delete().eq("user_id", user_id).execute()
         # Delete Profile (which includes trail presets)
         supabase.table("user_profiles").delete().eq("user_id", user_id).execute()
         
@@ -157,6 +161,7 @@ def sync_data(req: SyncRequest):
         password = req.password
         
         # If not provided directly (frontend MVP), lookup from DB
+        session_tokens_dict = None
         if not email or not password:
             supabase = get_supabase_client()
             profile = supabase.table("user_profiles").select("*").eq("user_id", req.user_id).execute()
@@ -164,8 +169,22 @@ def sync_data(req: SyncRequest):
                 raise ValueError("Garmin credentials not found for this user. Please save them first.")
             email = profile.data[0]["garmin_email"]
             password = decrypt_password(profile.data[0]["garmin_password_encrypted"])
+            session_tokens_dict = profile.data[0].get("garmin_session_tokens")
             
-        activities = fetch_garmin_data(email=email, password=password, user_id=req.user_id)
+        activities = fetch_garmin_data(
+            email=email, 
+            password=password, 
+            user_id=req.user_id,
+            session_tokens_dict=session_tokens_dict
+        )
+
+        # Compute and persist rolling training stats for AI analysis context
+        try:
+            supabase_client = get_supabase_client()
+            _compute_and_save_rolling_stats(supabase_client, req.user_id)
+        except Exception as stats_err:
+            logging.warning(f"Rolling stats computation failed (non-fatal): {stats_err}")
+
         return {"status": "success", "fetched": len(activities)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -566,6 +585,160 @@ def get_pace_zone_stats(
     return result
 
 
+# ── Rolling Training Stats helpers ──────────────────────────────────────── #
+
+_ROLLING_COLS = ",".join([
+    "distance", "averageSpeed", "averageHR", "aerobicTrainingEffect",
+    "averageRunningCadenceInStepsPerMinute", "avgStrideLength",
+    "avgVerticalOscillation", "avgGroundContactTime"
+])
+
+def _agg_activities(rows: list) -> dict | None:
+    """Aggregate key metrics from a list of activity rows. Returns None if empty."""
+    if not rows:
+        return None
+    import numpy as np
+    df = pd.DataFrame(rows)
+    result = {"run_count": len(df)}
+
+    dist = pd.to_numeric(df.get("distance", pd.Series(dtype=float)), errors="coerce").fillna(0)
+    result["total_dist_km"] = round(float(dist.sum()) / 1000, 1)
+
+    for col, out_key, transform in [
+        ("averageSpeed",                          "avg_pace_sec_km",  lambda v: round(1000 / v, 1) if v > 0 else None),
+        ("averageHR",                             "avg_hr",           lambda v: round(v, 1)),
+        ("aerobicTrainingEffect",                 "avg_te_aerobic",   lambda v: round(v, 2)),
+        ("averageRunningCadenceInStepsPerMinute", "avg_cadence_spm",  lambda v: round(v * 2, 1)),
+        ("avgStrideLength",                       "avg_stride_m",     lambda v: round(v, 3)),
+        ("avgVerticalOscillation",                "avg_vert_osc_cm",  lambda v: round(v, 1)),
+        ("avgGroundContactTime",                  "avg_gct_ms",       lambda v: round(v, 1)),
+    ]:
+        if col in df.columns:
+            vals = pd.to_numeric(df[col], errors="coerce").dropna()
+            vals = vals[vals > 0]
+            if not vals.empty:
+                mean_val = float(vals.mean())
+                result[out_key] = transform(mean_val)
+    return result
+
+
+def _compute_and_save_rolling_stats(supabase, user_id: str, reference_date=None) -> dict:
+    """
+    Compute 30-day rolling, prev-month, and prev-year-same-month stats
+    for the given user, upsert into activity_rolling_stats, and return the row.
+    reference_date: str or datetime (default: today UTC)
+    """
+    from datetime import timezone as tz
+
+    if reference_date is None:
+        ref = datetime.now(tz.utc)
+    else:
+        ref = pd.to_datetime(reference_date, utc=True).to_pydatetime()
+    if ref.tzinfo is None:
+        ref = ref.replace(tzinfo=tz.utc)
+
+    # ── Window definitions ──────────────────────────────────────────────── #
+    ref_iso      = ref.isoformat()
+    d30_start    = (ref - timedelta(days=30)).isoformat()
+
+    first_of_ref_month = ref.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    prev_month_end     = first_of_ref_month.isoformat()
+    prev_month_last    = first_of_ref_month - timedelta(days=1)
+    prev_month_start   = prev_month_last.replace(day=1).isoformat()
+
+    try:
+        pysm_start = ref.replace(year=ref.year - 1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    except ValueError:  # Feb 29 edge case
+        pysm_start = ref.replace(year=ref.year - 1, month=2, day=28, hour=0, minute=0, second=0, microsecond=0)
+    pysm_end = (pysm_start.replace(month=pysm_start.month + 1)
+                if pysm_start.month < 12
+                else pysm_start.replace(year=pysm_start.year + 1, month=1))
+
+    def fetch_window(start, end):
+        try:
+            resp = (supabase.table("activities")
+                    .select(_ROLLING_COLS)
+                    .eq("user_id", user_id)
+                    .gte("startTimeLocal", start)
+                    .lt("startTimeLocal", end)
+                    .execute())
+            return resp.data or []
+        except Exception as e:
+            logging.warning(f"rolling stats fetch error: {e}")
+            return []
+
+    d30_data  = _agg_activities(fetch_window(d30_start,             ref_iso))
+    pm_data   = _agg_activities(fetch_window(prev_month_start,      prev_month_end))
+    pysm_data = _agg_activities(fetch_window(pysm_start.isoformat(), pysm_end.isoformat()))
+
+    row = {
+        "user_id":        user_id,
+        "computed_at":    datetime.now(tz.utc).isoformat(),
+        "reference_date": ref.date().isoformat(),
+    }
+    for prefix, data in [("d30", d30_data), ("pm", pm_data), ("pysm", pysm_data)]:
+        if data:
+            for k, v in data.items():
+                row[f"{prefix}_{k}"] = v
+
+    try:
+        supabase.table("activity_rolling_stats").upsert(row, on_conflict="user_id").execute()
+        logging.info(f"Rolling stats saved for user {user_id}")
+    except Exception as e:
+        logging.error(f"Failed to save rolling stats: {e}")
+    return row
+
+
+def _format_rolling_stats_for_prompt(stats: dict) -> str:
+    """Format an activity_rolling_stats row into a readable prompt section."""
+    if not stats:
+        return ""
+
+    def pace_str(sec_km):
+        if not sec_km:
+            return "--"
+        pm = int(sec_km // 60)
+        ps = int(sec_km % 60)
+        return f"{pm}:{ps:02d}/km"
+
+    def fmt(val, unit=""):
+        if val is None:
+            return "--"
+        return f"{val}{unit}"
+
+    d30  = {k[4:]:  v for k, v in stats.items() if k.startswith("d30_")}
+    pm   = {k[3:]:  v for k, v in stats.items() if k.startswith("pm_")}
+    pysm = {k[5:]:  v for k, v in stats.items() if k.startswith("pysm_")}
+
+    metrics = [
+        ("ラン回数",        "run_count",        "",     False),
+        ("合計距離",        "total_dist_km",    "km",   False),
+        ("平均ペース",      "avg_pace_sec_km",  "pace", False),
+        ("平均心拍",        "avg_hr",           "bpm",  False),
+        ("平均ピッチ",      "avg_cadence_spm",  "spm",  False),
+        ("平均ストライド",  "avg_stride_m",     "m",    False),
+        ("平均上下動",      "avg_vert_osc_cm",  "cm",   False),
+        ("平均接地時間",    "avg_gct_ms",       "ms",   False),
+        ("平均有酸素TE",    "avg_te_aerobic",   "",     False),
+    ]
+
+    lines = ["【過去トレーニング統計 (AI分析コンテキスト)】"]
+    lines.append(f"{'指標':<16} {'過去30日':>12} {'先月':>12} {'去年同月':>12}")
+    lines.append("-" * 56)
+    for label, key, unit, _ in metrics:
+        v30   = d30.get(key)
+        vpm   = pm.get(key)
+        vpysm = pysm.get(key)
+        if unit == "pace":
+            s30, spm, spysm = pace_str(v30), pace_str(vpm), pace_str(vpysm)
+        else:
+            s30, spm, spysm = fmt(v30, unit), fmt(vpm, unit), fmt(vpysm, unit)
+        lines.append(f"{label:<16} {s30:>12} {spm:>12} {spysm:>12}")
+
+    return "\n".join(lines)
+
+
+
 
 @app.get("/api/activities/{activity_id}/gpx")
 def get_activity_gpx(activity_id: str):
@@ -706,9 +879,24 @@ def get_activity_analysis(activity_id: str, regenerate: bool = False, model: str
     description = activity.get('description', '')
     notes_str = f"\n【ランナー自身のメモ・感想】\n{description.strip()}" if description and description.strip() else ""
     
+    # ── Fetch pre-computed rolling stats for AI context ──────────────────── #
+    rolling_context = ""
+    user_id_for_profile = activity.get("user_id")
+    current_date_str    = activity.get("startTimeLocal")
+    try:
+        if user_id_for_profile:
+            rs_resp = supabase.table("activity_rolling_stats").select("*").eq("user_id", user_id_for_profile).execute()
+            if rs_resp.data:
+                rolling_context = "\n" + _format_rolling_stats_for_prompt(rs_resp.data[0])
+            else:
+                # On-demand fallback: compute now and cache
+                stats_row = _compute_and_save_rolling_stats(supabase, user_id_for_profile, current_date_str)
+                rolling_context = "\n" + _format_rolling_stats_for_prompt(stats_row)
+    except Exception as rs_err:
+        logging.warning(f"Rolling stats fetch failed (non-fatal): {rs_err}")
+
     past_30_summary = ""
     try:
-        user_id_for_profile = activity.get("user_id")
         current_date_str = activity.get("startTimeLocal")
         if user_id_for_profile and current_date_str:
             curr_date = pd.to_datetime(current_date_str, format='mixed', utc=False)
@@ -736,7 +924,7 @@ def get_activity_analysis(activity_id: str, regenerate: bool = False, model: str
     except Exception as e:
         print(f"Error fetching 30 days history: {e}")
 
-    runner_profile_str = "最近はベース構築をメインに行っており、将来的にはMt.Fuji Kai 70kのような長距離レースに参加したいと考えている。"
+    runner_profile_str = ""
     try:
         if user_id_for_profile:
             profile_resp = supabase.table("user_profiles").select("runner_profile").eq("user_id", user_id_for_profile).execute()
@@ -764,8 +952,8 @@ def get_activity_analysis(activity_id: str, regenerate: bool = False, model: str
 
 {gpx_summary}
 {past_30_summary}
-
-ユーザーの現状 (AIへの共有事項): {runner_profile_str}"""
+{rolling_context}
+{f'ユーザーの現状 (AIへの共有事項): {runner_profile_str}' if runner_profile_str else ''}"""
 
     if report_type == "long":
         user_content += """

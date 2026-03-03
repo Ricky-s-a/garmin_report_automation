@@ -7,7 +7,9 @@ from supabase import create_client, Client
 
 def get_supabase_client() -> Client:
     url = os.environ.get("SUPABASE_URL", "").strip().strip('\ufeff')
-    key = os.environ.get("SUPABASE_KEY", "").strip().strip('\ufeff')
+    # Use service_role key on backend to bypass RLS; fall back to anon key if not set
+    key = (os.environ.get("SUPABASE_SERVICE_KEY", "").strip().strip('\ufeff')
+           or os.environ.get("SUPABASE_KEY", "").strip().strip('\ufeff'))
     if not url or not key:
         raise ValueError("Supabase credentials not found. Check SUPABASE_URL and SUPABASE_KEY in .env")
     return create_client(url, key)
@@ -98,7 +100,12 @@ def parse_fit_to_supabase(zip_path: str, activity_id: str, supabase: Client, use
     except Exception as e:
         logging.warning(f"Failed to process FIT zip {zip_path}: {e}")
 
-def fetch_garmin_data(email: str = None, password: str = None, user_id: str = None) -> list:
+def fetch_garmin_data(
+    email: str = None, 
+    password: str = None, 
+    user_id: str = None,
+    session_tokens_dict: dict = None
+) -> list:
     """Fetch Garmin activities, generate Supabase records and GPX detail points."""
     if not email:
         email = os.environ.get("GARMIN_EMAIL")
@@ -110,7 +117,26 @@ def fetch_garmin_data(email: str = None, password: str = None, user_id: str = No
     
     logging.info("Initializing Garmin client...")
     client = Garmin(email, password)
-    client.login()
+    
+    if session_tokens_dict:
+        import tempfile, json, shutil
+        temp_dir = tempfile.mkdtemp()
+        try:
+            if "oauth1_token" in session_tokens_dict:
+                with open(os.path.join(temp_dir, "oauth1_token.json"), "w") as f:
+                    json.dump(session_tokens_dict["oauth1_token"], f)
+            if "oauth2_token" in session_tokens_dict:
+                with open(os.path.join(temp_dir, "oauth2_token.json"), "w") as f:
+                    json.dump(session_tokens_dict["oauth2_token"], f)
+            client.garth.load(temp_dir)
+            logging.info(f"Successfully loaded session tokens for {email}")
+        except Exception as e:
+            logging.error(f"Failed to load session tokens: {str(e)}")
+            client.login() # Fallback to password login
+        finally:
+            shutil.rmtree(temp_dir)
+    else:
+        client.login()
     
     supabase = get_supabase_client()
 
