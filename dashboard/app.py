@@ -1,7 +1,12 @@
 import os
 import json
 import uvicorn
+import logging
+import time as time_mod
 import pandas as pd
+from math import radians, sin, cos, sqrt, atan2
+from datetime import datetime, timedelta
+from collections import defaultdict
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
@@ -50,12 +55,14 @@ class SyncRequest(BaseModel):
     email: str = None
     password: str = None
 
+from typing import Optional
+
 class CredentialRequest(BaseModel):
     user_id: str
     garmin_email: str
     garmin_password: str
     runner_profile: str = ""
-    max_hr: int = None
+    max_hr: Optional[int] = None
 
 class TrailPresetsRequest(BaseModel):
     user_id: str
@@ -73,9 +80,7 @@ def delete_account(user_id: str):
         
         # Delete Activities
         supabase.table("activities").delete().eq("user_id", user_id).execute()
-        # Delete Trail Presets
-        supabase.table("trail_presets").delete().eq("user_id", user_id).execute()
-        # Delete Profile
+        # Delete Profile (which includes trail presets)
         supabase.table("user_profiles").delete().eq("user_id", user_id).execute()
         
         return {"status": "success", "message": "All data associated with the user has been deleted."}
@@ -188,6 +193,380 @@ def get_activities(user_id: str = None):
         
     return df.to_dict(orient="records")
 
+
+# ── Pace-zone stats helpers ──────────────────────────────────────────────── #
+
+_PACE_ZONES = [
+    ("<5:00",     0,   300),
+    ("5:00-6:00", 300, 360),
+    ("6:00-7:00", 360, 420),
+    ("7:00-8:00", 420, 480),
+    (">8:00",     480, 9999),
+]
+_ZONE_NAMES = [z[0] for z in _PACE_ZONES]
+_pz_mem_cache: dict = {}  # lightweight in-process cache (30 s) to avoid repeated DB reads
+
+def _haversine_m(lat1, lon1, lat2, lon2):
+    R = 6_371_000.0
+    p1r, p2r = radians(lat1), radians(lat2)
+    dp, dl   = radians(lat2 - lat1), radians(lon2 - lon1)
+    a = sin(dp / 2) ** 2 + cos(p1r) * cos(p2r) * sin(dl / 2) ** 2
+    return R * 2 * atan2(sqrt(a), sqrt(1 - a))
+
+def _gap_speed(actual_speed_ms: float, grade_pct: float) -> float:
+    """
+    Grade Adjusted Pace (GAP): convert actual speed to equivalent flat speed.
+    grade_pct > 0 → uphill (harder), grade_pct < 0 → downhill (easier up to ~-15%).
+    Formula: gap_speed = actual_speed × effort_factor
+      uphill:   effort_factor = 1 + 0.04 × grade (4% per 1% grade, common trail approximation)
+      downhill: effort_factor = 1 + 0.02 × grade (grade is negative, so factor < 1)
+    Clamped to [0.6, 3.0] for sanity.
+    """
+    grade_pct = max(-30.0, min(45.0, grade_pct))
+    effort = 1.0 + (0.04 * grade_pct if grade_pct >= 0 else 0.02 * grade_pct)
+    return actual_speed_ms * max(0.6, min(3.0, effort))
+
+def _zone_name(pace_sec_km: float) -> str:
+    for name, lo, hi in _PACE_ZONES:
+        if lo <= pace_sec_km < hi:
+            return name
+    return ">8:00"
+
+def _period_key_fn(start_time_str: str, period: str):
+    try:
+        dt = datetime.fromisoformat(start_time_str.replace(" ", "T")[:19])
+    except Exception:
+        return None
+    if period == "weekly":
+        return (dt - timedelta(days=dt.weekday())).strftime("%Y-%m-%d")
+    elif period == "monthly":
+        return dt.strftime("%Y-%m")
+    return dt.strftime("%Y")
+
+def _empty_zstats():
+    return {zn: {"t": 0.0, "hr_wt": 0.0, "sp_wt": 0.0} for zn in _ZONE_NAMES}
+
+def _format_zstats(stats: dict) -> dict:
+    out = {}
+    for zn in _ZONE_NAMES:
+        s = stats[zn]
+        t = s["t"]
+        if t < 1:
+            continue
+        avg_hr = s["hr_wt"] / t if t > 0 else None
+        avg_sp = s["sp_wt"] / t if t > 0 else 0.0
+        out[zn] = {
+            "time_mins": round(t / 60, 1),
+            "avg_hr":    round(avg_hr, 1) if avg_hr else None,
+            "avg_ae":    round(avg_sp / avg_hr * 1000, 2) if avg_hr else None,
+        }
+    return out
+
+def _rows_to_response(overall_rows, period_rows, date_from, date_to, period):
+    """Convert flat DB rows into the API response dict."""
+    overall = {}
+    for r in overall_rows:
+        overall[r["zone_name"]] = {
+            "time_mins": r["time_mins"],
+            "avg_hr":    r["avg_hr"],
+            "avg_ae":    r["avg_ae"],
+        }
+
+    # filter by date range (period_key prefix)
+    def in_range(pk):
+        if date_from and pk < date_from[:7]:
+            return False
+        if date_to   and pk > date_to  [:7]:
+            return False
+        return True
+
+    by_period = defaultdict(dict)
+    for r in period_rows:
+        if in_range(r["period_key"]):
+            by_period[r["period_key"]][r["zone_name"]] = {
+                "time_mins": r["time_mins"],
+                "avg_hr":    r["avg_hr"],
+                "avg_ae":    r["avg_ae"],
+            }
+
+    time_series = [
+        {"period": pk, "zones": zones}
+        for pk, zones in sorted(by_period.items())
+    ]
+    return {
+        "overall":        overall,
+        "time_series":    time_series,
+        "zone_names":     _ZONE_NAMES,
+        "from_cache":     True,
+        "activity_count": 0,
+        "point_count":    0,
+    }
+
+def _save_pz_to_db(supabase, user_id: str, period: str, result: dict):
+    """Upsert computed stats into pace_zone_stats table."""
+    from datetime import timezone as tz
+    now_iso = datetime.now(tz.utc).isoformat()
+    rows = []
+
+    # overall rows
+    for zn, stats in result.get("overall", {}).items():
+        rows.append({
+            "user_id":     user_id,
+            "period_type": "overall",
+            "period_key":  "all",
+            "zone_name":   zn,
+            "time_mins":   stats["time_mins"],
+            "avg_hr":      stats["avg_hr"],
+            "avg_ae":      stats["avg_ae"],
+            "computed_at": now_iso,
+        })
+
+    # time-series rows
+    for item in result.get("time_series", []):
+        for zn, stats in item["zones"].items():
+            rows.append({
+                "user_id":     user_id,
+                "period_type": period,
+                "period_key":  item["period"],
+                "zone_name":   zn,
+                "time_mins":   stats["time_mins"],
+                "avg_hr":      stats["avg_hr"],
+                "avg_ae":      stats["avg_ae"],
+                "computed_at": now_iso,
+            })
+
+    batch = 100
+    for i in range(0, len(rows), batch):
+        try:
+            supabase.table("pace_zone_stats").upsert(
+                rows[i:i+batch],
+                on_conflict="user_id,period_type,period_key,zone_name"
+            ).execute()
+        except Exception as e:
+            logging.error(f"pace_zone_stats upsert error: {e}")
+
+
+@app.get("/api/pace-zone-stats")
+def get_pace_zone_stats(
+    user_id: str,
+    date_from: str = None,
+    date_to:   str = None,
+    period:    str = "monthly",
+    force:     bool = False,
+):
+    from datetime import timezone as tz
+
+    # ── 0. Fast in-process cache (30 s) ───────────────────────────────────── #
+    mem_key = (user_id, period)
+    now_ts  = time_mod.time()
+    if not force and mem_key in _pz_mem_cache:
+        cached_result, cached_at = _pz_mem_cache[mem_key]
+        if now_ts - cached_at < 30:
+            return _rows_to_response(
+                cached_result["overall_rows"],
+                cached_result["period_rows"],
+                date_from, date_to, period
+            )
+
+    supabase = get_supabase_client()
+
+    # ── 1. Check Supabase DB cache (24 h TTL) ────────────────────────────── #
+    if not force:
+        try:
+            check = (supabase.table("pace_zone_stats")
+                     .select("computed_at")
+                     .eq("user_id", user_id)
+                     .eq("period_type", period)
+                     .order("computed_at", desc=True)
+                     .limit(1).execute())
+            if check.data:
+                ts_str = check.data[0]["computed_at"].replace("Z", "+00:00")
+                computed_at = datetime.fromisoformat(ts_str)
+                age = (datetime.now(tz.utc) - computed_at).total_seconds()
+                if age < 86400:  # 24 hours
+                    overall_rows = (supabase.table("pace_zone_stats")
+                                    .select("*")
+                                    .eq("user_id", user_id)
+                                    .eq("period_type", "overall")
+                                    .execute().data or [])
+                    period_rows  = (supabase.table("pace_zone_stats")
+                                    .select("*")
+                                    .eq("user_id", user_id)
+                                    .eq("period_type", period)
+                                    .execute().data or [])
+                    _pz_mem_cache[mem_key] = (
+                        {"overall_rows": overall_rows, "period_rows": period_rows},
+                        now_ts
+                    )
+                    return _rows_to_response(overall_rows, period_rows,
+                                             date_from, date_to, period)
+        except Exception as e:
+            logging.warning(f"DB cache check failed: {e}")
+
+    # ── 2. Full computation over ALL activities (no date filter on input) ── #
+    q = (supabase.table("activities")
+         .select("activityId, startTimeLocal")
+         .eq("user_id", user_id))
+    acts = q.execute().data or []
+
+    act_period_map = {}
+    for a in acts:
+        pk = _period_key_fn(a.get("startTimeLocal", ""), period)
+        if pk:
+            act_period_map[str(a["activityId"])] = pk
+
+    activity_ids = list(act_period_map.keys())
+    if not activity_ids:
+        return {"overall": {}, "time_series": [], "zone_names": _ZONE_NAMES,
+                "activity_count": 0, "point_count": 0, "from_cache": False}
+
+    # ── 3. Batch-fetch GPX points — now includes elevation ──────────────── #
+    all_points: list = []
+    for i in range(0, len(activity_ids), 20):
+        chunk = activity_ids[i: i + 20]
+        offset = 0
+        while True:
+            try:
+                resp = (supabase.table("gpx_points")
+                        .select("activityId,time,latitude,longitude,"
+                                "elevation,heartRate,cadence,stride_length")
+                        .in_("activityId", chunk)
+                        .order("activityId").order("time")
+                        .range(offset, offset + 999)
+                        .execute())
+                rows = resp.data or []
+                all_points.extend(rows)
+                if len(rows) < 1000:
+                    break
+                offset += 1000
+            except Exception as e:
+                logging.error(f"gpx batch error: {e}")
+                break
+
+    # ── 4. Group by activity ─────────────────────────────────────────────── #
+    pts_by_act = defaultdict(list)
+    for pt in all_points:
+        pts_by_act[str(pt["activityId"])].append(pt)
+    for aid in pts_by_act:
+        pts_by_act[aid].sort(key=lambda p: str(p.get("time", "")))
+
+    # ── 5. Compute GAP-based pace-zone statistics ────────────────────────── #
+    overall    = _empty_zstats()
+    period_map: dict = {}
+
+    for aid, pts in pts_by_act.items():
+        pk = act_period_map.get(aid)
+        if not pk:
+            continue
+        if pk not in period_map:
+            period_map[pk] = _empty_zstats()
+        pstats = period_map[pk]
+
+        for i in range(1, len(pts)):
+            p0, p1 = pts[i - 1], pts[i]
+
+            # time delta
+            try:
+                t0  = datetime.fromisoformat(str(p0["time"]).replace("Z", "+00:00"))
+                t1  = datetime.fromisoformat(str(p1["time"]).replace("Z", "+00:00"))
+                dt_s = (t1 - t0).total_seconds()
+                if dt_s <= 0 or dt_s > 120:
+                    continue
+            except Exception:
+                continue
+
+            # actual speed from GPS
+            speed_ms = None
+            dist_m   = None
+            try:
+                la0 = float(p0.get("latitude")  or 0)
+                lo0 = float(p0.get("longitude") or 0)
+                la1 = float(p1.get("latitude")  or 0)
+                lo1 = float(p1.get("longitude") or 0)
+                if la0 and la1:
+                    dist_m = _haversine_m(la0, lo0, la1, lo1)
+                    s = dist_m / dt_s
+                    if 0.8 < s < 8.0:
+                        speed_ms = s
+            except Exception:
+                pass
+
+            # stride × cadence fallback (treadmill)
+            if speed_ms is None:
+                try:
+                    sl  = float(p1.get("stride_length") or 0)
+                    cad = float(p1.get("cadence")       or 0)
+                    s   = 0.0
+                    if sl > 100 and cad > 100:
+                        s = (sl / 1000.0) * (cad / 60.0)
+                    elif 0.3 < sl < 3.0 and cad > 100:
+                        s = sl * (cad / 60.0)
+                    if 0.8 < s < 8.0:
+                        speed_ms = s
+                except Exception:
+                    pass
+
+            if speed_ms is None:
+                continue
+
+            # ── GAP adjustment using elevation ──────────────────────────── #
+            gap_speed = speed_ms  # default: no adjustment
+            if dist_m and dist_m > 0:
+                try:
+                    ele0 = float(p0.get("elevation") or 0)
+                    ele1 = float(p1.get("elevation") or 0)
+                    if ele0 != 0 or ele1 != 0:
+                        grade_pct = (ele1 - ele0) / dist_m * 100
+                        gap_speed = _gap_speed(speed_ms, grade_pct)
+                except Exception:
+                    pass
+
+            zn = _zone_name(1000.0 / gap_speed)
+
+            try:
+                hr = float(p1.get("heartRate") or 0)
+                if hr < 60 or hr > 220:
+                    continue
+            except Exception:
+                continue
+
+            for sd in (overall[zn], pstats[zn]):
+                sd["t"]     += dt_s
+                sd["hr_wt"] += hr * dt_s
+                sd["sp_wt"] += gap_speed * dt_s   # store GAP speed
+
+    # ── 6. Format ─────────────────────────────────────────────────────────── #
+    time_series = [
+        {"period": pk, "zones": _format_zstats(period_map[pk])}
+        for pk in sorted(period_map.keys())
+    ]
+    result = {
+        "overall":        _format_zstats(overall),
+        "time_series":    time_series,
+        "zone_names":     _ZONE_NAMES,
+        "activity_count": len(activity_ids),
+        "point_count":    len(all_points),
+        "from_cache":     False,
+    }
+
+    # ── 7. Persist to Supabase ──────────────────────────────────────────── #
+    try:
+        _save_pz_to_db(supabase, user_id, period, result)
+    except Exception as e:
+        logging.error(f"Failed to save pace-zone stats: {e}")
+
+    # ── 8. Filter output by requested date range ─────────────────────────── #
+    if date_from or date_to:
+        result["time_series"] = [
+            item for item in result["time_series"]
+            if (not date_from or item["period"] >= date_from[:7])
+            and (not date_to   or item["period"] <= date_to  [:7])
+        ]
+
+    return result
+
+
+
 @app.get("/api/activities/{activity_id}/gpx")
 def get_activity_gpx(activity_id: str):
     try:
@@ -203,12 +582,11 @@ def get_activity_gpx(activity_id: str):
     df_filtered = df_filtered.fillna('')
     
     # Attempt to convert types for charts
-    try:
-        df_filtered['elevation'] = pd.to_numeric(df_filtered['elevation'], errors='coerce').fillna(0)
-        df_filtered['heartRate'] = pd.to_numeric(df_filtered['heartRate'], errors='coerce').fillna(0)
-        df_filtered['cadence'] = pd.to_numeric(df_filtered['cadence'], errors='coerce').fillna(0)
-    except:
-        pass
+    numeric_cols = ['elevation', 'heartRate', 'cadence', 'power', 
+                    'stride_length', 'vertical_oscillation', 'ground_contact_time']
+    for col in numeric_cols:
+        if col in df_filtered.columns:
+            df_filtered[col] = pd.to_numeric(df_filtered[col], errors='coerce').fillna(0)
         
     return df_filtered.to_dict(orient="records")
 

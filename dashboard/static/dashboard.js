@@ -1,6 +1,13 @@
 ﻿let map;
 let polyline;
 let analysisChart;
+let paceChart;
+let gapChart;
+let cadenceChart;
+let powerChart;
+let strideChart;
+let oscillationChart;
+let contactTimeChart;
 let trendChart;
 let trendElevationChart;
 let trendPaceHRChart;
@@ -9,12 +16,18 @@ let trendVo2Chart;
 let trendTeChart;
 let trendCadenceChart;
 let trendFormChart;
+let trendHrByPaceChart;
+let trendAeByPaceChart;
+let trendMonthlyDistChart;
+let trendAtlCtlChart;
+let trendZone2Chart;
 let hrZoneChart;
 // ... other charts ...
+let userMaxHr = null;
+let userRestingHr = parseInt(localStorage.getItem('garmin_resting_hr') || '55') || 55;
 let globalActivities = [];
 let appSupabase;
 let currentUser = null;
-let userMaxHr = null;
 
 // Initialize Supabase from API config
 async function initSupabase() {
@@ -211,6 +224,8 @@ function setupNavigation() {
                         document.getElementById('settings-garmin-password').value = '********'; // Masked password
                         document.getElementById('settings-runner-profile').value = data.runner_profile || '';
                         document.getElementById('settings-max-hr').value = data.max_hr || '';
+                        document.getElementById('settings-resting-hr').value = localStorage.getItem('garmin_resting_hr') || '';
+                        document.getElementById('settings-weekly-target').value = localStorage.getItem('garmin_weekly_target') || 50;
                         // Optional clear status msg
                         document.getElementById('settings-status').textContent = '';
                     }
@@ -255,6 +270,13 @@ function setupNavigation() {
             if (res.ok) {
                 status.textContent = "Settings saved successfully!";
                 userMaxHr = mhr; // update locally
+                const restingHrVal = document.getElementById('settings-resting-hr').value;
+                if (restingHrVal) {
+                    userRestingHr = parseInt(restingHrVal);
+                    localStorage.setItem('garmin_resting_hr', restingHrVal);
+                }
+                localStorage.setItem('garmin_weekly_target', document.getElementById('settings-weekly-target').value || 50);
+
                 status.style.color = "green";
                 setTimeout(() => modal.classList.add('hidden'), 1500);
             } else {
@@ -292,7 +314,7 @@ function setupNavigation() {
                 });
                 if (res.ok) {
                     alert("データが正常に削除されました。自動的にサインアウトします。");
-                    await supabase.auth.signOut();
+                    await appSupabase.auth.signOut();
                     window.location.reload();
                 } else {
                     const data = await res.json();
@@ -608,6 +630,78 @@ async function loadActivityDetails(activity, allActivities) {
         const response = await fetch(`/api/activities/${activity.activityId}/gpx`);
         const points = await response.json();
 
+        if (!points || points.length === 0) {
+            console.warn("No GPX data points found.");
+            return;
+        }
+
+        // Calculate GAP (Grade Adjusted Pace)
+        let totalEffDist = 0;
+        let totalTimeSecs = 0;
+        points[0].gapSpeed = 0; // fallback for the first point
+
+        for (let i = 1; i < points.length; i++) {
+            const p1 = points[i - 1];
+            const p2 = points[i];
+
+            const lat1 = parseFloat(p1.latitude);
+            const lon1 = parseFloat(p1.longitude);
+            const lat2 = parseFloat(p2.latitude);
+            const lon2 = parseFloat(p2.longitude);
+            const ele1 = parseFloat(p1.elevation);
+            const ele2 = parseFloat(p2.elevation);
+
+            let dist = 0;
+            // Haversine distance
+            if (!isNaN(lat1) && !isNaN(lon1) && !isNaN(lat2) && !isNaN(lon2)) {
+                const R = 6371e3;
+                const f1 = lat1 * Math.PI / 180;
+                const f2 = lat2 * Math.PI / 180;
+                const df = (lat2 - lat1) * Math.PI / 180;
+                const dl = (lon2 - lon1) * Math.PI / 180;
+
+                const a = Math.sin(df / 2) * Math.sin(df / 2) + Math.cos(f1) * Math.cos(f2) * Math.sin(dl / 2) * Math.sin(dl / 2);
+                const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+                dist = R * c;
+            }
+
+            const dt = (new Date(p2.time).getTime() - new Date(p1.time).getTime()) / 1000;
+            let effDist = dist;
+
+            if (dt > 0 && dt <= 120 && dist > 0) {
+                if (!isNaN(ele1) && !isNaN(ele2)) {
+                    let elevDiff = ele2 - ele1;
+                    let grade = elevDiff / dist;
+
+                    if (grade > 0) {
+                        effDist = dist + elevDiff * 10; // Uphill adjustment
+                    } else if (grade < -0.15) {
+                        effDist = dist + Math.abs(elevDiff) * 2; // Steep downhill penalty
+                    } else if (grade < 0) {
+                        effDist = dist - Math.abs(elevDiff) * 3; // Gentle downhill bonus
+                        if (effDist < 0) effDist = dist;
+                    }
+                }
+                p2.gapSpeed = effDist / dt;
+                totalEffDist += effDist;
+                totalTimeSecs += dt;
+            } else {
+                p2.gapSpeed = 0; // Too noisy/stopped
+            }
+        }
+
+        if (totalTimeSecs > 0) {
+            const avgGapSpeed = totalEffDist / totalTimeSecs;
+            document.getElementById('val-gap').textContent = speedToPace(avgGapSpeed);
+            if (avgGapSpeed > activity.averageSpeed) {
+                document.getElementById('val-gap').style.color = "#10b981"; // Faster than flat
+            } else {
+                document.getElementById('val-gap').style.color = "#ef4444"; // Slower than flat
+            }
+        } else {
+            document.getElementById('val-gap').textContent = "--";
+        }
+
         updateChart(points);
         updateHrZoneChart(points);
     } catch (e) {
@@ -621,75 +715,320 @@ async function loadActivityDetails(activity, allActivities) {
 function updateChart(points) {
     const validPoints = points.filter(p => parseFloat(p.heartRate) > 0);
 
-    const labels = validPoints.map(p => p.time.substring(11, 16));
+    let cumulativeDist = 0;
+    const labels = validPoints.map((p, idx, arr) => {
+        if (idx > 0) {
+            let lat1 = parseFloat(arr[idx - 1].latitude), lon1 = parseFloat(arr[idx - 1].longitude);
+            let lat2 = parseFloat(p.latitude), lon2 = parseFloat(p.longitude);
+            if (!isNaN(lat1) && !isNaN(lon1) && !isNaN(lat2) && !isNaN(lon2)) {
+                const R = 6371e3;
+                const f1 = lat1 * Math.PI / 180, f2 = lat2 * Math.PI / 180;
+                const df = (lat2 - lat1) * Math.PI / 180, dl = (lon2 - lon1) * Math.PI / 180;
+                const a = Math.sin(df / 2) * Math.sin(df / 2) + Math.cos(f1) * Math.cos(f2) * Math.sin(dl / 2) * Math.sin(dl / 2);
+                cumulativeDist += R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+            }
+        }
+        return (cumulativeDist / 1000).toFixed(2);
+    });
     const hrData = validPoints.map(p => parseFloat(p.heartRate));
     const eleData = validPoints.map(p => parseFloat(p.elevation));
+    const cadenceData = validPoints.map(p => parseFloat(p.cadence) * 2); // Steps per min (usually half steps are stored)
+    const powerData = validPoints.map(p => parseFloat(p.power || 0)); // Assuming power might be added or exist
+    const strideData = validPoints.map(p => parseFloat(p.stride_length || 0) / 10.0); // usually in mm
+    const oscillationData = validPoints.map(p => parseFloat(p.vertical_oscillation || 0) / 10.0); // usually in mm
+    const contactTimeData = validPoints.map(p => parseFloat(p.ground_contact_time || 0) / 10.0); // usually in 10x ms
 
-    const ctx = document.getElementById('analysisChart').getContext('2d');
+    // Calculate moving average of Pace and GAP Pace for smoothness
+    const windowSize = 5;
+    const gapPaceData = validPoints.map((p, idx, arr) => {
+        let sumSpeed = 0, count = 0;
+        for (let j = Math.max(0, idx - windowSize); j <= Math.min(arr.length - 1, idx + windowSize); j++) {
+            if (arr[j].gapSpeed > 0) { sumSpeed += arr[j].gapSpeed; count++; }
+        }
+        let avgSpeed = count > 0 ? sumSpeed / count : 0;
+        if (avgSpeed < 1 || avgSpeed > 8) return null; // Filter out extreme walking/gps glitch
+        return (1000 / avgSpeed / 60); // Convert to min/km
+    });
 
-    if (analysisChart) {
-        analysisChart.destroy();
+    const paceData = validPoints.map((p, idx, arr) => {
+        let sumSpeed = 0, count = 0;
+        for (let j = Math.max(0, idx - windowSize); j <= Math.min(arr.length - 1, idx + windowSize); j++) {
+            // Recalculate spot speed
+            const p1 = arr[Math.max(0, j - 1)];
+            const p2 = arr[j];
+            const dist = p1 === p2 ? 0 :
+                (function () {
+                    let lat1 = parseFloat(p1.latitude), lon1 = parseFloat(p1.longitude);
+                    let lat2 = parseFloat(p2.latitude), lon2 = parseFloat(p2.longitude);
+                    if (isNaN(lat1) || isNaN(lon1) || isNaN(lat2) || isNaN(lon2)) return 0;
+                    const R = 6371e3;
+                    const f1 = lat1 * Math.PI / 180;
+                    const f2 = lat2 * Math.PI / 180;
+                    const df = (lat2 - lat1) * Math.PI / 180;
+                    const dl = (lon2 - lon1) * Math.PI / 180;
+                    const a = Math.sin(df / 2) * Math.sin(df / 2) + Math.cos(f1) * Math.cos(f2) * Math.sin(dl / 2) * Math.sin(dl / 2);
+                    return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+                })();
+            const dt = (new Date(p2.time).getTime() - new Date(p1.time).getTime()) / 1000;
+            const spotSpd = dt > 0 ? dist / dt : 0;
+            if (spotSpd > 0) { sumSpeed += spotSpd; count++; }
+        }
+        let avgSpeed = count > 0 ? sumSpeed / count : 0;
+        if (avgSpeed < 1 || avgSpeed > 8) return null;
+        return (1000 / avgSpeed / 60);
+    });
+
+    const splits = [];
+    let currentKmTarget = 1000;
+    let splitStartTime = new Date(validPoints[0].time).getTime();
+    let splitStartElev = parseFloat(validPoints[0].elevation) || 0;
+    let runDist = 0;
+    let splitStartDist = 0;
+    let splitStartIdx = 0;
+
+    for (let i = 1; i < validPoints.length; i++) {
+        const p1 = validPoints[i - 1];
+        const p2 = validPoints[i];
+        let lat1 = parseFloat(p1.latitude), lon1 = parseFloat(p1.longitude);
+        let lat2 = parseFloat(p2.latitude), lon2 = parseFloat(p2.longitude);
+        if (!isNaN(lat1) && !isNaN(lon1) && !isNaN(lat2) && !isNaN(lon2)) {
+            const R = 6371e3;
+            const f1 = lat1 * Math.PI / 180, f2 = lat2 * Math.PI / 180;
+            const df = (lat2 - lat1) * Math.PI / 180, dl = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(df / 2) * Math.sin(df / 2) + Math.cos(f1) * Math.cos(f2) * Math.sin(dl / 2) * Math.sin(dl / 2);
+            runDist += R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+        }
+
+        if (runDist >= currentKmTarget || i === validPoints.length - 1) {
+            const isFinal = (i === validPoints.length - 1);
+            if (isFinal && runDist < currentKmTarget && runDist - splitStartDist < 50) {
+                break; // Skip fractional last split if < 50m
+            }
+            const splitEndTime = new Date(p2.time).getTime();
+            const timeDiffSec = (splitEndTime - splitStartTime) / 1000;
+            const distDiffM = runDist - splitStartDist;
+
+            const distInKm = distDiffM / 1000;
+            const kmLabelStr = distInKm.toFixed(2) + " km";
+
+            const sMin = Math.floor(timeDiffSec / 60);
+            const sSec = Math.floor(timeDiffSec % 60);
+            let splitTimeStr;
+            if (sMin > 0) {
+                splitTimeStr = `${sMin}:${sSec < 10 ? '0' : ''}${sSec}`;
+            } else {
+                splitTimeStr = `${sSec} 秒`;
+            }
+
+            let paceStr = "--:--";
+            let gapStr = "--:--";
+            if (distDiffM > 0) {
+                const paceSecPerKm = timeDiffSec * (1000 / distDiffM);
+                const pMin = Math.floor(paceSecPerKm / 60);
+                const pSec = Math.floor(paceSecPerKm % 60);
+                paceStr = `${pMin}:${pSec < 10 ? '0' : ''}${pSec}`;
+
+                let sumGapSpeed = 0, gapCount = 0;
+                for (let k = splitStartIdx; k <= i; k++) {
+                    if (validPoints[k].gapSpeed > 0) {
+                        sumGapSpeed += validPoints[k].gapSpeed;
+                        gapCount++;
+                    }
+                }
+                if (gapCount > 0) {
+                    const avgGapSpeed = sumGapSpeed / gapCount;
+                    const gapSecPerKm = 1000 / avgGapSpeed;
+                    const gMin = Math.floor(gapSecPerKm / 60);
+                    const gSec = Math.floor(gapSecPerKm % 60);
+                    gapStr = `${gMin}:${gSec < 10 ? '0' : ''}${gSec}`;
+                }
+            }
+
+            let sumHr = 0, hrCount = 0;
+            for (let k = splitStartIdx; k <= i; k++) {
+                if (validPoints[k].heartRate > 0) {
+                    sumHr += parseFloat(validPoints[k].heartRate);
+                    hrCount++;
+                }
+            }
+            const avgHr = hrCount > 0 ? Math.round(sumHr / hrCount) : "--";
+
+            const splitEndElev = parseFloat(p2.elevation) || 0;
+
+            splits.push({ dist: kmLabelStr, time: splitTimeStr, pace: paceStr + ' /km', gap: gapStr + ' /km', hr: `${avgHr} bpm` });
+
+            splitStartTime = splitEndTime;
+            splitStartElev = splitEndElev;
+            splitStartDist = runDist;
+            splitStartIdx = i;
+            currentKmTarget += 1000;
+        }
     }
 
-    analysisChart = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: labels,
-            datasets: [
-                {
-                    label: 'Heart Rate (bpm)',
-                    data: hrData,
-                    borderColor: '#ef4444',
-                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                    yAxisID: 'y',
-                    tension: 0.4,
-                    fill: true,
-                    pointRadius: 0
-                },
-                {
-                    label: 'Elevation (m)',
-                    data: eleData,
-                    borderColor: '#10b981',
-                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
-                    yAxisID: 'y1',
-                    tension: 0.4,
-                    fill: true,
-                    pointRadius: 0
-                }
-            ]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
+    const splitsBody = document.getElementById('splits-table-body');
+    if (splitsBody && splits.length > 0) {
+        document.getElementById('splits-card').style.display = 'block';
+        splitsBody.innerHTML = splits.map(s => `
+            <tr style="border-bottom: 1px solid #e2e8f0;">
+                <td style="padding: 10px; font-weight: 500;">${s.dist}</td>
+                <td style="padding: 10px; font-weight: 500;">${s.time}</td>
+                <td style="padding: 10px;">${s.pace}</td>
+                <td style="padding: 10px;">${s.gap}</td>
+                <td style="padding: 10px;">${s.hr}</td>
+            </tr>
+        `).join('');
+    } else if (splitsBody) {
+        document.getElementById('splits-card').style.display = 'none';
+    }
+
+    if (analysisChart) analysisChart.destroy();
+    if (paceChart) paceChart.destroy();
+    if (gapChart) gapChart.destroy();
+    if (cadenceChart) cadenceChart.destroy();
+    if (powerChart) powerChart.destroy();
+    if (strideChart) strideChart.destroy();
+    if (oscillationChart) oscillationChart.destroy();
+    if (contactTimeChart) contactTimeChart.destroy();
+
+    // Default shared scale configuration for elevation as background
+    const getChartOptions = (y2Title, y2Color, y2Reverse = false, y2Step = null) => {
+        let y2Config = {
+            type: 'linear', display: true, position: 'left',
+            grid: { color: 'rgba(0,0,0,0.05)' },
+            title: { display: true, text: y2Title, color: y2Color },
+            ticks: { color: y2Color }
+        };
+        if (y2Reverse) y2Config.reverse = true;
+        if (y2Step) y2Config.ticks.stepSize = y2Step;
+
+        return {
+            responsive: true, maintainAspectRatio: false,
             interaction: { mode: 'index', intersect: false },
             color: '#475569',
             scales: {
                 x: {
                     grid: { color: 'rgba(0,0,0,0.05)' },
-                    ticks: { maxTicksLimit: 10, color: '#64748b' }
+                    ticks: {
+                        maxTicksLimit: 10,
+                        color: '#64748b',
+                        callback: function (value, index, values) {
+                            return labels[index] + "km";
+                        }
+                    }
                 },
-                y: {
-                    type: 'linear',
-                    display: true,
-                    position: 'left',
-                    grid: { color: 'rgba(0,0,0,0.05)' },
-                    title: { display: true, text: 'Heart Rate', color: '#64748b' },
-                    ticks: { color: '#64748b' }
-                },
+                y: y2Config,
                 y1: {
-                    type: 'linear',
-                    display: true,
-                    position: 'right',
+                    type: 'linear', display: true, position: 'right',
                     grid: { drawOnChartArea: false },
-                    title: { display: true, text: 'Elevation', color: '#64748b' },
-                    ticks: { color: '#64748b' }
+                    title: { display: true, text: 'Elevation (m)', color: '#94a3b8' },
+                    ticks: { color: '#94a3b8' }
                 }
             },
-            plugins: {
-                legend: { labels: { color: '#475569' } }
-            }
-        }
+            plugins: { legend: { labels: { color: '#475569' } } }
+        };
+    };
+
+    const datasetsElevation = {
+        label: 'Elevation (m)', data: eleData,
+        borderColor: '#94a3b8', backgroundColor: 'rgba(148, 163, 184, 0.12)',
+        yAxisID: 'y1', tension: 0.4, fill: true, pointRadius: 0
+    };
+
+    // 1. HR Chart
+    analysisChart = new Chart(document.getElementById('analysisChart').getContext('2d'), {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Heart Rate (bpm)', data: hrData, borderColor: '#ef4444',
+                    backgroundColor: 'rgba(239, 68, 68, 0.1)', yAxisID: 'y', tension: 0.4, fill: true, pointRadius: 0
+                },
+                datasetsElevation
+            ]
+        },
+        options: getChartOptions('Heart Rate (bpm)', '#ef4444')
     });
+
+    // 2. Pace Chart
+    paceChart = new Chart(document.getElementById('paceChart').getContext('2d'), {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Pace (min/km)', data: paceData, borderColor: '#3b82f6',
+                    backgroundColor: 'transparent', yAxisID: 'y', tension: 0.4, borderWidth: 2, pointRadius: 0
+                },
+                datasetsElevation
+            ]
+        },
+        options: getChartOptions('Pace (min/km)', '#3b82f6', true, 1)
+    });
+
+    // 3. GAP Chart
+    gapChart = new Chart(document.getElementById('gapChart').getContext('2d'), {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'GAP (min/km)', data: gapPaceData, borderColor: '#8b5cf6',
+                    backgroundColor: 'transparent', yAxisID: 'y', tension: 0.4, borderWidth: 2, borderDash: [5, 5], pointRadius: 0
+                },
+                datasetsElevation
+            ]
+        },
+        options: getChartOptions('GAP (min/km)', '#8b5cf6', true, 1)
+    });
+
+    // 4. Cadence Chart
+    cadenceChart = new Chart(document.getElementById('cadenceChart').getContext('2d'), {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Cadence (spm)', data: cadenceData, borderColor: '#f59e0b',
+                    backgroundColor: 'rgba(245, 158, 11, 0.1)', yAxisID: 'y', tension: 0.4, fill: true, pointRadius: 0
+                },
+                datasetsElevation
+            ]
+        },
+        options: getChartOptions('Cadence (spm)', '#f59e0b')
+    });
+
+    const createOptionalChart = (id, cardId, dataObj, label, color, convert = false) => {
+        if (dataObj.some(v => v > 0)) {
+            document.getElementById(cardId).style.display = 'block';
+            return new Chart(document.getElementById(id).getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: label, data: dataObj, borderColor: color,
+                            backgroundColor: 'transparent', yAxisID: 'y', tension: 0.4, fill: false, borderWidth: 2, pointRadius: 0
+                        },
+                        datasetsElevation
+                    ]
+                },
+                options: getChartOptions(label, color)
+            });
+        } else {
+            document.getElementById(cardId).style.display = 'none';
+            return null;
+        }
+    };
+
+    // 5. Power Chart
+    powerChart = createOptionalChart('powerChart', 'power-card', powerData, 'Power (W)', '#ec4899');
+    // 6. Stride Length
+    strideChart = createOptionalChart('strideChart', 'stride-card', strideData, 'Stride Length (cm)', '#06b6d4');
+    // 7. Vertical Oscillation
+    oscillationChart = createOptionalChart('oscillationChart', 'oscillation-card', oscillationData, 'Vertical Oscillation (cm)', '#eab308');
+    // 8. Ground Contact Time
+    contactTimeChart = createOptionalChart('contactTimeChart', 'contact-time-card', contactTimeData, 'Ground Contact Time (ms)', '#f97316');
 }
 
 // Update HR Zone Chart (Time in Zone)
@@ -805,14 +1144,112 @@ function updateHrZoneChart(points) {
 }
 
 // ============== Trends Analysis ============== //
+let trendDateFrom = null;
+let trendDateTo = null;
+let currentTrendPeriod = 'weekly';
+
+/** Set default date range to [today - 1 year, today] if inputs are empty. */
+function initTrendDefaultDates() {
+    const fromEl = document.getElementById('trend-date-from');
+    const toEl = document.getElementById('trend-date-to');
+    if (!fromEl || !toEl) return;
+    if (fromEl.value && toEl.value) return; // already set
+    const today = new Date();
+    const oneYearAgo = new Date();
+    oneYearAgo.setFullYear(today.getFullYear() - 1);
+    toEl.value = today.toISOString().substring(0, 10);
+    fromEl.value = oneYearAgo.toISOString().substring(0, 10);
+    trendDateFrom = fromEl.value;
+    trendDateTo = toEl.value;
+}
+
+window.applyTrendDateFilter = function () {
+    trendDateFrom = document.getElementById('trend-date-from').value || null;
+    trendDateTo = document.getElementById('trend-date-to').value || null;
+    renderTrends(currentTrendPeriod);
+};
+
+window.clearTrendDateFilter = function () {
+    trendDateFrom = null;
+    trendDateTo = null;
+    document.getElementById('trend-date-from').value = '';
+    document.getElementById('trend-date-to').value = '';
+    renderTrends(currentTrendPeriod);
+};
+
 function renderTrends(period) {
     document.querySelectorAll('.pill-btn').forEach(el => el.classList.remove('active'));
     document.getElementById(`pill-${period}`).classList.add('active');
+    currentTrendPeriod = period;
+    initTrendDefaultDates();   // ensure default 1-year range is set
 
     if (!globalActivities || globalActivities.length === 0) return;
 
-    const validActivities = globalActivities.filter(a => parseFloat(a.distance) > 0);
+    // Apply date filter
+    const fromMs = trendDateFrom ? new Date(trendDateFrom).getTime() : null;
+    const toMs = trendDateTo ? new Date(trendDateTo + 'T23:59:59').getTime() : null;
+
+    const validActivities = globalActivities.filter(a => {
+        if (parseFloat(a.distance) <= 0) return false;
+        if (fromMs || toMs) {
+            const dStr = (a.startTimeLocal || '').replace(' ', 'T');
+            const t = new Date(dStr).getTime();
+            if (fromMs && t < fromMs) return false;
+            if (toMs && t > toMs) return false;
+        }
+        return true;
+    });
     const dataReversed = [...validActivities].reverse();
+
+    // === 🏃‍♂️ Current Week Progress (Mon-Sun) ===
+    let currentWeekDistKm = 0;
+    const today = new Date();
+    const currentDayOfWeek = today.getDay(); // 0=Sun
+    const daysToMonday = currentDayOfWeek === 0 ? 6 : currentDayOfWeek - 1;
+    const currentMonday = new Date(today);
+    currentMonday.setDate(today.getDate() - daysToMonday);
+    currentMonday.setHours(0, 0, 0, 0);
+
+    validActivities.forEach(act => {
+        const d = new Date(act.startTimeLocal || act.time);
+        if (d >= currentMonday) {
+            currentWeekDistKm += parseFloat(act.distance) / 1000 || 0;
+        }
+    });
+
+    const weeklyTargetKm = parseFloat(localStorage.getItem('garmin_weekly_target')) || 50;
+    const progressPct = weeklyTargetKm > 0 ? Math.min(100, Math.round((currentWeekDistKm / weeklyTargetKm) * 100)) : 0;
+    const remainingKm = Math.max(0, weeklyTargetKm - currentWeekDistKm);
+
+    document.getElementById('weekly-progress-text').textContent = `${currentWeekDistKm.toFixed(1)} / ${weeklyTargetKm} km (${progressPct}%)`;
+    document.getElementById('weekly-progress-remaining').textContent = `残り ${remainingKm.toFixed(1)} km`;
+    document.getElementById('weekly-progress-bar').style.width = `${progressPct}%`;
+
+    // === 📊 Monthly Distance (Past 12 Months) ===
+    const monthlyDistGroups = {};
+    const twelveMonthsAgo = new Date();
+    twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 11);
+    twelveMonthsAgo.setDate(1);
+    twelveMonthsAgo.setHours(0, 0, 0, 0);
+
+    const monthLabels = [];
+    for (let i = 0; i < 12; i++) {
+        const m = new Date(twelveMonthsAgo);
+        m.setMonth(m.getMonth() + i);
+        const k = `${m.getFullYear()}-${(m.getMonth() + 1).toString().padStart(2, '0')}`;
+        monthlyDistGroups[k] = 0;
+        monthLabels.push(k);
+    }
+
+    validActivities.forEach(act => {
+        const d = new Date(act.startTimeLocal || act.time);
+        if (d >= twelveMonthsAgo) {
+            const k = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}`;
+            if (monthlyDistGroups[k] !== undefined) {
+                monthlyDistGroups[k] += parseFloat(act.distance) / 1000 || 0;
+            }
+        }
+    });
 
     const grouped = {};
     let totalDistKm = 0;
@@ -854,6 +1291,16 @@ function renderTrends(period) {
                 anaerobicTeSum: 0, validAnTeCount: 0,
                 vertOscSum: 0, validVertOscCount: 0,
                 gctSum: 0, validGctCount: 0,
+                duration: 0,          // total duration seconds for ATL/CTL
+                zone2Secs: 0,         // seconds in HR Zone 2
+                totalHrSecs: 0,       // total seconds with valid HR
+                paceZones: {
+                    '<5:00': { hrSum: 0, hrCount: 0, aeSum: 0, aeCount: 0 },
+                    '5:00': { hrSum: 0, hrCount: 0, aeSum: 0, aeCount: 0 },
+                    '6:00': { hrSum: 0, hrCount: 0, aeSum: 0, aeCount: 0 },
+                    '7:00': { hrSum: 0, hrCount: 0, aeSum: 0, aeCount: 0 },
+                    '8:00+': { hrSum: 0, hrCount: 0, aeSum: 0, aeCount: 0 }
+                }
             };
         }
 
@@ -862,8 +1309,22 @@ function renderTrends(period) {
         grouped[key].count += 1;
         totalDistKm += distKm;
 
+        // Duration for ATL/CTL (TRIMP proxy: duration * avgHR factor)
+        const durSec = parseFloat(act.duration) || 0;
+        grouped[key].duration += durSec;
+
         const hr = parseFloat(act.averageHR);
         if (hr > 0) { grouped[key].hrSum += hr; grouped[key].validHrCount++; }
+
+        // Zone 2 time approximation: if avgHR falls in zone 2 band, count full duration
+        if (durSec > 0 && hr > 0) {
+            const z1_top = userMaxHr ? Math.round(userMaxHr * 0.6) : 114;
+            const z2_top = userMaxHr ? Math.round(userMaxHr * 0.7) : 133;
+            grouped[key].totalHrSecs += durSec;
+            if (hr >= z1_top && hr < z2_top) {
+                grouped[key].zone2Secs += durSec;
+            }
+        }
 
         let cad = parseFloat(act.averageRunningCadenceInStepsPerMinute) || 0;
         if (cad > 0) {
@@ -883,6 +1344,21 @@ function renderTrends(period) {
         if (spd > 0) {
             grouped[key].speedSum += spd; grouped[key].validSpeedCount++;
             sumSpeed += spd; speedCount++;
+
+            const paceMin = (1000 / spd) / 60;
+            let bucket = '';
+            if (paceMin < 5) bucket = '<5:00';
+            else if (paceMin < 6) bucket = '5:00';
+            else if (paceMin < 7) bucket = '6:00';
+            else if (paceMin < 8) bucket = '7:00';
+            else bucket = '8:00+';
+
+            if (hr > 0) {
+                grouped[key].paceZones[bucket].hrSum += hr;
+                grouped[key].paceZones[bucket].hrCount++;
+                grouped[key].paceZones[bucket].aeSum += (spd / hr) * 1000;
+                grouped[key].paceZones[bucket].aeCount++;
+            }
         }
 
         const elev = parseFloat(act.elevationGain) || 0;
@@ -939,18 +1415,102 @@ function renderTrends(period) {
     const vertOscAvg = labels.map(k => grouped[k].validVertOscCount > 0 ? (grouped[k].vertOscSum / grouped[k].validVertOscCount).toFixed(1) : null);
     const gctAvg = labels.map(k => grouped[k].validGctCount > 0 ? (grouped[k].gctSum / grouped[k].validGctCount).toFixed(0) : null);
 
-    // Summary stats
-    document.getElementById('trend-dist').textContent = totalDistKm.toFixed(1) + ' km';
-    document.getElementById('trend-count').textContent = dataReversed.length;
-    if (cadenceCount > 0) document.getElementById('trend-cadence').textContent = (sumCadence / cadenceCount).toFixed(0) + ' spm';
-    if (speedCount > 0) {
-        const avgPace = speedToPace(sumSpeed / speedCount);
-        const avgStride = strideCount > 0 ? (sumStride / strideCount).toFixed(2) + 'm' : '--';
-        document.getElementById('trend-pace').textContent = `${avgStride} / ${avgPace}`;
+    // Summary stats (kept for backwards compat, hidden in UI)
+    renderCalendar(validActivities, trendDateFrom, trendDateTo);
+
+    // === ATL / CTL / TSB — Day-by-day TRIMP-based ===
+    // TRIMP formula: duration_min × hrReserve × 0.64 × e^(1.92 × hrReserve)
+    // hrReserve = (avgHR - restHR) / (maxHR - restHR)
+    //
+    // We build a daily TRIMP map from ALL globalActivities (not just filtered),
+    // then run exponential smoothing day-by-day and sample at each period's end date.
+
+    const restHr = userRestingHr || 55;
+    const maxHrForTrimp = userMaxHr || Math.max(...globalActivities.map(a => parseFloat(a.maxHR) || 0).filter(v => v > 100), 185);
+
+    // Build daily TRIMP map
+    const dailyTRIMP = {};
+    globalActivities.forEach(act => {
+        const dateStr = (act.startTimeLocal || '').substring(0, 10);
+        if (!dateStr) return;
+        const dur = (parseFloat(act.duration) || 0) / 60; // minutes
+        const avgHr = parseFloat(act.averageHR) || 0;
+        if (dur <= 0 || avgHr <= 0) return;
+        const hrRes = Math.min(Math.max((avgHr - restHr) / (maxHrForTrimp - restHr), 0), 1);
+        const trimp = dur * hrRes * 0.64 * Math.exp(1.92 * hrRes);
+        dailyTRIMP[dateStr] = (dailyTRIMP[dateStr] || 0) + trimp;
+    });
+
+    // Run day-by-day exponential smoothing over the full date range of our periods
+    const atlDecay = Math.exp(-1 / 7);
+    const ctlDecay = Math.exp(-1 / 42);
+
+    // Determine start/end from period labels
+    let simStart = null, simEnd = null;
+    if (labels.length > 0) {
+        // simStart = 90 days before first period to warm up CTL
+        simStart = new Date(labels[0] + (period === 'monthly' ? '-01' : ''));
+        simStart.setDate(simStart.getDate() - 90);
+        simEnd = new Date(); // today
     }
 
-    renderPRPanel(validActivities);
-    renderCalendar(validActivities);
+    // Map period label → end date of that period
+    const periodEndDateMap = {};
+    labels.forEach((k, i) => {
+        const nextKey = labels[i + 1];
+        let endDate;
+        if (period === 'weekly') {
+            endDate = new Date(k);
+            endDate.setDate(endDate.getDate() + 6);
+        } else if (period === 'monthly') {
+            const d = new Date(k + '-01');
+            d.setMonth(d.getMonth() + 1);
+            d.setDate(d.getDate() - 1);
+            endDate = d;
+        } else {
+            endDate = new Date(k + '-12-31');
+        }
+        periodEndDateMap[k] = endDate.toISOString().substring(0, 10);
+    });
+
+    // Simulate day-by-day
+    const atlByDate = {};
+    const ctlByDate = {};
+    let atl = 0, ctl = 0;
+    if (simStart && simEnd) {
+        const cur = new Date(simStart);
+        while (cur <= simEnd) {
+            const ds = cur.toISOString().substring(0, 10);
+            const load = dailyTRIMP[ds] || 0;
+            atl = atl * atlDecay + load * (1 - atlDecay);
+            ctl = ctl * ctlDecay + load * (1 - ctlDecay);
+            atlByDate[ds] = atl;
+            ctlByDate[ds] = ctl;
+            cur.setDate(cur.getDate() + 1);
+        }
+    }
+
+    // Sample at each period's end date
+    const atlValues = labels.map(k => {
+        const ds = periodEndDateMap[k];
+        return ds && atlByDate[ds] != null ? parseFloat(atlByDate[ds].toFixed(1)) : null;
+    });
+    const ctlValues = labels.map(k => {
+        const ds = periodEndDateMap[k];
+        return ds && ctlByDate[ds] != null ? parseFloat(ctlByDate[ds].toFixed(1)) : null;
+    });
+    const tsbValues = ctlValues.map((c, i) =>
+        c !== null && atlValues[i] !== null ? parseFloat((c - atlValues[i]).toFixed(1)) : null
+    );
+
+    // Latest TSB for warning banner
+    const latestTSB = tsbValues.length > 0 ? tsbValues[tsbValues.length - 1] : null;
+
+    // === Zone 2 % ===
+    const zone2Pct = labels.map(k => {
+        const total = grouped[k].totalHrSecs;
+        return total > 0 ? parseFloat(((grouped[k].zone2Secs / total) * 100).toFixed(1)) : null;
+    });
 
     const xScale = { grid: { display: false }, ticks: { color: '#64748b' } };
     const yScale = { ticks: { color: '#64748b' } };
@@ -964,6 +1524,17 @@ function renderTrends(period) {
         options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: xScale, y: { ...yScale, beginAtZero: true } } }
     });
 
+    // 1b. Monthly Distance (past 1 year)
+    const monthlyDistValues = monthLabels.map(k => monthlyDistGroups[k]);
+    const monthlyDisplayLabels = monthLabels.map(k => `${k.slice(2, 4)}/${parseInt(k.slice(5))}月`);
+    const ctxMo = document.getElementById('trendMonthlyDistChart').getContext('2d');
+    if (trendMonthlyDistChart) trendMonthlyDistChart.destroy();
+    trendMonthlyDistChart = new Chart(ctxMo, {
+        type: 'bar',
+        data: { labels: monthlyDisplayLabels, datasets: [{ label: '月間走行距離 (km)', data: monthlyDistValues, backgroundColor: '#3b82f6', borderRadius: 4 }] },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: xScale, y: { ...yScale, beginAtZero: true } } }
+    });
+
     // 2. Elevation
     const ctx2 = document.getElementById('trendElevationChart').getContext('2d');
     if (trendElevationChart) trendElevationChart.destroy();
@@ -973,53 +1544,98 @@ function renderTrends(period) {
         options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: xScale, y: { ...yScale, beginAtZero: true } } }
     });
 
-    // 3. Pace + HR
-    const ctx3 = document.getElementById('trendPaceHRChart').getContext('2d');
-    if (trendPaceHRChart) trendPaceHRChart.destroy();
-    trendPaceHRChart = new Chart(ctx3, {
+    // 2b. ATL / CTL / TSB
+    // TSB warning banner
+    const bannerEl = document.getElementById('tsb-warning-banner');
+    if (bannerEl) {
+        if (latestTSB !== null && latestTSB < -20) {
+            bannerEl.style.display = 'flex';
+            bannerEl.innerHTML = `⚠️ <strong>オーバートレーニング警告</strong>: 現在のTSB（フォーム）は <strong style="color:#fca5a5;">${latestTSB}</strong> です。休養または強度を下げることを推奨します。`;
+        } else if (latestTSB !== null && latestTSB >= 10 && latestTSB <= 25) {
+            bannerEl.style.display = 'flex';
+            bannerEl.innerHTML = `🏁 <strong>レース最適状態</strong>: TSBは <strong style="color:#86efac;">${latestTSB}</strong> です。ピークパフォーマンスに近い状態です！`;
+        } else {
+            bannerEl.style.display = 'none';
+        }
+    }
+
+    const ctxAtlCtl = document.getElementById('trendAtlCtlChart').getContext('2d');
+    if (trendAtlCtlChart) trendAtlCtlChart.destroy();
+    trendAtlCtlChart = new Chart(ctxAtlCtl, {
         type: 'line',
         data: {
             labels: displayLabels,
             datasets: [
-                { label: 'Avg Heart Rate (bpm)', data: hrAverages, borderColor: '#ef4444', backgroundColor: '#ef4444', yAxisID: 'y', tension: 0.3, spanGaps: true },
-                { label: 'Avg Pace (min/km)', data: paceMinsPerKm, borderColor: '#10b981', backgroundColor: '#10b981', yAxisID: 'y1', tension: 0.3, spanGaps: true }
+                { label: 'CTL フィットネス (42日)', data: ctlValues, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.08)', fill: true, tension: 0.4, spanGaps: true, pointRadius: 2, borderWidth: 2.5, yAxisID: 'y' },
+                { label: 'ATL 疲労 (7日)', data: atlValues, borderColor: '#f97316', backgroundColor: 'rgba(249,115,22,0.06)', fill: true, tension: 0.4, spanGaps: true, pointRadius: 2, borderWidth: 2.5, yAxisID: 'y' },
+                { label: 'TSB フォーム (CTL-ATL)', data: tsbValues, borderColor: '#a855f7', backgroundColor: 'rgba(168,85,247,0.0)', fill: false, tension: 0.4, spanGaps: true, pointRadius: 2, borderWidth: 2, borderDash: [4, 3], yAxisID: 'y1' }
             ]
         },
-
         options: {
             responsive: true, maintainAspectRatio: false,
             interaction: { mode: 'index', intersect: false },
-            scales: {
-                x: xScale,
-                y: { type: 'linear', display: true, position: 'left', title: { display: true, text: 'Heart Rate', color: '#64748b' }, ticks: { color: '#64748b' } },
-                y1: { type: 'linear', display: true, position: 'right', reverse: true, title: { display: true, text: 'Pace (min/km)', color: '#64748b' }, grid: { drawOnChartArea: false }, ticks: { color: '#64748b' } }
-            },
             plugins: {
-                legend: { labels: { color: '#475569' } },
+                legend: { labels: { color: '#475569', usePointStyle: true } },
                 tooltip: {
                     callbacks: {
-                        label: function (c) {
-                            if (c.datasetIndex === 1) { const v = c.parsed.y; const m = Math.floor(v); const s = Math.floor((v - m) * 60).toString().padStart(2, '0'); return `Avg Pace: ${m}'${s}" /km`; }
-                            return `Avg HR: ${c.parsed.y} bpm`;
+                        afterBody: function (items) {
+                            const tsb = tsbValues[items[0].dataIndex];
+                            if (tsb === null) return '';
+                            let state = '';
+                            if (tsb > 25) state = '🟦 Too Fresh';
+                            else if (tsb >= 10) state = '🟩 Peaked レース最適';
+                            else if (tsb >= 0) state = '🟨 Fresh';
+                            else if (tsb >= -10) state = '🟧 Productive';
+                            else if (tsb >= -20) state = '🟥 High Load';
+                            else state = '🔴 Overtraining Risk!';
+                            return `状態: ${state}`;
                         }
+                    }
+                }
+            },
+            scales: {
+                x: xScale,
+                y: { beginAtZero: true, title: { display: true, text: 'TRIMP Load', color: '#64748b' }, ticks: { color: '#64748b' }, position: 'left' },
+                y1: {
+                    title: { display: true, text: 'TSB (Form)', color: '#a855f7' },
+                    ticks: { color: '#a855f7' },
+                    position: 'right',
+                    grid: { drawOnChartArea: false },
+                    afterDataLimits: (axis) => {
+                        // Ensure 0 line is visible
+                        axis.min = Math.min(axis.min, -30);
+                        axis.max = Math.max(axis.max, 30);
                     }
                 }
             }
         }
     });
 
-    // 4. Aerobic Efficiency
-    const ctx4 = document.getElementById('trendAeChart').getContext('2d');
-    if (trendAeChart) trendAeChart.destroy();
-    trendAeChart = new Chart(ctx4, {
-        type: 'line',
-        data: { labels: displayLabels, datasets: [{ label: 'Speed/Heartbeat (m×10⁻³)', data: aeAverages, borderColor: '#8b5cf6', backgroundColor: 'rgba(139,92,246,0.1)', fill: true, tension: 0.3, spanGaps: true, pointRadius: 3 }] },
+    // 2c. Zone 2 %
+    const ctxZ2 = document.getElementById('trendZone2Chart').getContext('2d');
+    if (trendZone2Chart) trendZone2Chart.destroy();
+    trendZone2Chart = new Chart(ctxZ2, {
+        type: 'bar',
+        data: { labels: displayLabels, datasets: [{ label: 'Zone2 割合 (%)', data: zone2Pct, backgroundColor: zone2Pct.map(v => v !== null && v >= 70 ? '#10b981' : '#94a3b8'), borderRadius: 4 }] },
         options: {
             responsive: true, maintainAspectRatio: false,
-            plugins: { legend: { labels: { color: '#475569' } } },
-            scales: { x: xScale, y: { title: { display: true, text: 'm / heartbeat (×10⁻³)', color: '#64748b' }, ticks: { color: '#64748b' } } }
+            plugins: {
+                legend: { display: false },
+                annotation: { annotations: [{ type: 'line', yMin: 80, yMax: 80, borderColor: '#10b981', borderWidth: 2, borderDash: [6, 4], label: { content: '目標80%', display: true, position: 'end', color: '#10b981', font: { size: 11 } } }] }
+            },
+            scales: { x: xScale, y: { min: 0, max: 100, title: { display: true, text: 'Zone2 %', color: '#64748b' }, ticks: { color: '#64748b', callback: v => v + '%' } } }
         }
     });
+
+    // 3. Pace + HR — removed (replaced by GPX-based pace-zone analysis)
+    if (trendPaceHRChart) { trendPaceHRChart.destroy(); trendPaceHRChart = null; }
+
+    // 4. Aerobic Efficiency — removed (replaced by GPX-based pace-zone AE)
+    if (trendAeChart) { trendAeChart.destroy(); trendAeChart = null; }
+
+    // 4b. Activity-summary pace-zone HR/AE — removed (GPX-based section handles this)
+    if (trendHrByPaceChart) { trendHrByPaceChart.destroy(); trendHrByPaceChart = null; }
+    if (trendAeByPaceChart) { trendAeByPaceChart.destroy(); trendAeByPaceChart = null; }
 
     // 5. VO2max
     const ctx5 = document.getElementById('trendVo2Chart').getContext('2d');
@@ -1112,57 +1728,18 @@ function renderTrends(period) {
     });
 }
 
-// ============== PR Panel ============== //
-function renderPRPanel(activities) {
-    if (!activities || activities.length === 0) return;
-
-    let maxDist = 0, maxDistAct = null;
-    let minPaceSec = Infinity, minPaceAct = null;
-    let maxElev = 0, maxElevAct = null;
-    let maxVo2 = 0, maxVo2Act = null;
-
-    activities.forEach(act => {
-        const dist = parseFloat(act.distance) || 0;
-        if (dist > maxDist) { maxDist = dist; maxDistAct = act; }
-
-        const spd = parseFloat(act.averageSpeed) || 0;
-        if (spd > 0) {
-            const paceSec = 1000 / spd;
-            if (paceSec < minPaceSec && paceSec > 180) { minPaceSec = paceSec; minPaceAct = act; }
-        }
-
-        const elev = parseFloat(act.elevationGain) || 0;
-        if (elev > maxElev) { maxElev = elev; maxElevAct = act; }
-
-        const vo2 = parseFloat(act.vO2MaxValue) || 0;
-        if (vo2 > maxVo2) { maxVo2 = vo2; maxVo2Act = act; }
-    });
-
-    if (maxDistAct) {
-        document.getElementById('pr-distance').textContent = (maxDist / 1000).toFixed(2) + ' km';
-        document.getElementById('pr-distance-date').textContent = (maxDistAct.startTimeLocal || '').substring(0, 10);
-    }
-    if (minPaceAct) {
-        const m = Math.floor(minPaceSec / 60);
-        const s = Math.floor(minPaceSec % 60).toString().padStart(2, '0');
-        document.getElementById('pr-pace').textContent = `${m}'${s}" /km`;
-        document.getElementById('pr-pace-date').textContent = (minPaceAct.startTimeLocal || '').substring(0, 10);
-    }
-    if (maxElevAct) {
-        document.getElementById('pr-elevation').textContent = maxElev.toFixed(0) + ' m';
-        document.getElementById('pr-elevation-date').textContent = (maxElevAct.startTimeLocal || '').substring(0, 10);
-    }
-    if (maxVo2Act) {
-        document.getElementById('pr-vo2').textContent = maxVo2.toFixed(1);
-        document.getElementById('pr-vo2-date').textContent = (maxVo2Act.startTimeLocal || '').substring(0, 10);
-    }
-}
-
 // ============== Calendar Heatmap ============== //
-function renderCalendar(activities) {
+/**
+ * Renders a GitHub-style activity heatmap.
+ * dateFrom / dateTo: ISO date strings (YYYY-MM-DD), optional.
+ * The calendar always shows the range [displayStart, displayEnd],
+ * aligned to full weeks (Sun→Sat), capped at MAX_WEEKS columns.
+ */
+function renderCalendar(activities, dateFrom, dateTo) {
     const container = document.getElementById('calendar-heatmap');
     if (!container) return;
 
+    // Build a date → km map from the provided activities
     const dateMap = {};
     activities.forEach(act => {
         const dateStr = (act.startTimeLocal || '').substring(0, 10);
@@ -1171,11 +1748,38 @@ function renderCalendar(activities) {
         dateMap[dateStr] = (dateMap[dateStr] || 0) + distKm;
     });
 
+    // Determine display window
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const startDate = new Date(today);
-    startDate.setDate(startDate.getDate() - 364);
-    startDate.setDate(startDate.getDate() - startDate.getDay()); // align to Sunday
+
+    let displayEnd = today;
+    if (dateTo) {
+        const parsed = new Date(dateTo);
+        if (!isNaN(parsed) && parsed < today) displayEnd = parsed;
+    }
+    displayEnd.setHours(0, 0, 0, 0);
+
+    // Default: 52 weeks back from displayEnd; if dateFrom given, use it
+    const MAX_WEEKS = 53;
+    let displayStart;
+    if (dateFrom) {
+        displayStart = new Date(dateFrom);
+        if (isNaN(displayStart)) displayStart = null;
+    }
+    if (!displayStart) {
+        displayStart = new Date(displayEnd);
+        displayStart.setDate(displayStart.getDate() - 364);
+    }
+
+    // Cap to MAX_WEEKS to avoid enormous grids
+    const maxStartMs = displayEnd.getTime() - MAX_WEEKS * 7 * 86400_000;
+    if (displayStart.getTime() < maxStartMs) {
+        displayStart = new Date(maxStartMs);
+    }
+
+    // Align displayStart to the nearest Sunday on or before
+    displayStart.setDate(displayStart.getDate() - displayStart.getDay());
+    displayStart.setHours(0, 0, 0, 0);
 
     const getColor = (km) => {
         if (!km || km === 0) return '#e2e8f0';
@@ -1185,21 +1789,29 @@ function renderCalendar(activities) {
         return '#052e16';
     };
 
-    const monthLabels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const monthLabels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const weeks = [];
-    let current = new Date(startDate);
-    while (current <= today) {
+    let current = new Date(displayStart);
+    while (current <= displayEnd) {
         const week = [];
         for (let d = 0; d < 7; d++) {
-            const dateStr = current.toISOString().substring(0, 10);
-            week.push({ dateStr, distKm: dateMap[dateStr] || 0, isFuture: current > today });
+            const ds = current.toISOString().substring(0, 10);
+            week.push({
+                dateStr: ds,
+                distKm: dateMap[ds] || 0,
+                isFuture: current > displayEnd,
+            });
             current.setDate(current.getDate() + 1);
         }
         weeks.push(week);
     }
 
+    // Build HTML
     let prevMonth = -1;
     let html = `<div style="display:flex;gap:2px;align-items:flex-start;">`;
+
+    // Day-of-week labels
     html += `<div style="display:flex;flex-direction:column;gap:2px;padding-top:20px;margin-right:4px;">`;
     ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].forEach((label, i) => {
         html += `<div style="height:12px;font-size:10px;color:#94a3b8;line-height:12px;">${[1, 3, 5].includes(i) ? label : ''}</div>`;
@@ -1210,12 +1822,14 @@ function renderCalendar(activities) {
         html += `<div style="display:flex;flex-direction:column;gap:2px;">`;
         const monthDate = new Date(week[0].dateStr);
         const month = monthDate.getMonth();
-        const monthStr = (month !== prevMonth && monthDate.getDate() <= 7) ? monthLabels[month] : '';
-        if (month !== prevMonth && monthDate.getDate() <= 7) prevMonth = month;
-        html += `<div style="height:18px;font-size:10px;color:#94a3b8;text-align:center;">${monthStr}</div>`;
+        const showMonth = month !== prevMonth && monthDate.getDate() <= 7;
+        if (showMonth) prevMonth = month;
+        html += `<div style="height:18px;font-size:10px;color:#94a3b8;text-align:center;">${showMonth ? monthLabels[month] : ''}</div>`;
         week.forEach(day => {
             const color = day.isFuture ? 'transparent' : getColor(day.distKm);
-            const title = day.distKm > 0 ? `${day.dateStr}: ${day.distKm.toFixed(1)}km` : day.dateStr;
+            const title = day.distKm > 0
+                ? `${day.dateStr}: ${day.distKm.toFixed(1)}km`
+                : day.dateStr;
             html += `<div title="${title}" style="width:12px;height:12px;background:${color};border-radius:2px;"></div>`;
         });
         html += `</div>`;
@@ -1353,6 +1967,7 @@ document.getElementById('btn-add-preset')?.addEventListener('click', () => {
     saveUserTrailPresets();
 });
 
+// Preset change: only fill inputs, do NOT auto-calculate
 document.getElementById('trail-presets').addEventListener('change', (e) => {
     const val = e.target.value;
     const merged = getMergedPresets();
@@ -1360,11 +1975,18 @@ document.getElementById('trail-presets').addEventListener('change', (e) => {
         document.getElementById('trail-target-dist').value = merged[val].dist;
         document.getElementById('trail-target-elev').value = merged[val].elev;
     }
-    calculateTrailTime();
+    // No auto-calc: user must click Predict Time
 });
 
-document.getElementById('trail-filter-elev')?.addEventListener('input', renderTrailCalculator);
-document.getElementById('trail-filter-pace')?.addEventListener('input', renderTrailCalculator);
+// Remove auto-trigger on filter input change (inputs no longer trigger directly)
+// document.getElementById('trail-filter-elev')?.addEventListener('input', renderTrailCalculator);
+// document.getElementById('trail-filter-pace')?.addEventListener('input', renderTrailCalculator);
+
+// Main trigger: Predict Time button runs model rebuild + prediction
+document.getElementById('btn-calc-trail').addEventListener('click', () => {
+    renderTrailCalculator(); // rebuild regression from filters + date range
+    calculateTrailTime();    // compute prediction
+});
 
 function renderTrailCalculator() {
     if (!globalActivities || globalActivities.length === 0) return;
@@ -1373,16 +1995,26 @@ function renderTrailCalculator() {
 
     const minElev = parseFloat(document.getElementById('trail-filter-elev')?.value || 30);
     const maxPaceMinKm = parseFloat(document.getElementById('trail-filter-pace')?.value || 20);
+    const dateFromStr = document.getElementById('trail-date-from')?.value || null;
+    const dateToStr = document.getElementById('trail-date-to')?.value || null;
+    const fromMs = dateFromStr ? new Date(dateFromStr).getTime() : null;
+    const toMs = dateToStr ? new Date(dateToStr + 'T23:59:59').getTime() : null;
 
-    // Detect trail runs: Elevation >= minElev per 1km AND distance > 1km
+    // Detect trail runs with all filters applied
     const trailRuns = globalActivities.filter(act => {
         const distKm = (act.distance || 0) / 1000;
         const elevM = act.elevationGain || 0;
         if (distKm < 1 || !act.duration) return false;
 
-        const nameLower = (act.activityName || '').toLowerCase();
-        const isHilly = (elevM / distKm) >= minElev;
+        // Date range filter
+        if (fromMs || toMs) {
+            const dStr = (act.startTimeLocal || '').replace(' ', 'T');
+            const t = new Date(dStr).getTime();
+            if (fromMs && t < fromMs) return false;
+            if (toMs && t > toMs) return false;
+        }
 
+        const isHilly = (elevM / distKm) >= minElev;
         const paceSecKm = act.duration / distKm;
         const paceMinKm = paceSecKm / 60;
 
@@ -1436,11 +2068,11 @@ function renderTrailCalculator() {
     } else {
         document.getElementById('trail-regression-formula').textContent = 'Not enough data points';
     }
-
-    calculateTrailTime();
+    // Do NOT call calculateTrailTime here – Predict Time button does both steps.
 }
 
-document.getElementById('btn-calc-trail').addEventListener('click', calculateTrailTime);
+// btn-calc-trail is now set up above (single listener replaces old one).
+// Keep this stub so no duplicate listener.
 
 function calculateTrailTime() {
     const targetDistKm = parseFloat(document.getElementById('trail-target-dist').value || 0);
@@ -1571,3 +2203,158 @@ function drawTrailChart(targetX, predPaceSec, targetDist, raceName) {
     });
 }
 
+
+// ============================================================
+// GPX-based Pace-Zone Analysis
+// ============================================================
+
+const ZONE_COLORS = {
+    '<5:00': '#ef4444',
+    '5:00-6:00': '#f97316',
+    '6:00-7:00': '#eab308',
+    '7:00-8:00': '#22c55e',
+    '>8:00': '#3b82f6',
+};
+
+let pzOverallChart = null;
+let pzStatsCache = null;
+
+async function fetchAndRenderPaceZoneStats(force = false) {
+    if (!currentUser) return;
+
+    const loadingEl = document.getElementById('pace-zone-loading');
+    const chartsEl = document.getElementById('pace-zone-charts');
+    const btnEl = document.getElementById('btn-analyze-pace-zones');
+
+    loadingEl.style.display = 'flex';
+    chartsEl.style.display = 'none';
+    if (btnEl) btnEl.disabled = true;
+
+    try {
+        const dateFrom = trendDateFrom || '';
+        const dateTo = trendDateTo || '';
+        let url = '/api/pace-zone-stats?user_id=' + encodeURIComponent(currentUser.id) + '&period=' + currentTrendPeriod;
+        if (dateFrom) url += '&date_from=' + dateFrom;
+        if (dateTo) url += '&date_to=' + dateTo;
+        if (force) url += '&force=true';
+
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        pzStatsCache = await res.json();
+
+        renderPaceZoneCharts(pzStatsCache);
+        loadingEl.style.display = 'none';
+        chartsEl.style.display = 'block';
+
+        const meta = document.getElementById('pace-zone-meta');
+        if (meta) {
+            const cacheLabel = pzStatsCache.from_cache ? '（DBキャッシュ）' : '（新規計算 + DB保存済）';
+            meta.textContent = cacheLabel + ' 分析対象: ' + pzStatsCache.activity_count + ' activities / ' + (pzStatsCache.point_count || '―').toLocaleString() + ' GPX points';
+        }
+    } catch (e) {
+        console.error('Pace-zone stats error:', e);
+        const lt = document.getElementById('pace-zone-loading-text');
+        if (lt) lt.textContent = '⚠️ データの取得に失敗しました。しばらくしてから再試行してください。';
+    } finally {
+        if (btnEl) btnEl.disabled = false;
+    }
+}
+
+function renderPaceZoneCharts(data) {
+    const zoneNames = data.zone_names || ['<5:00', '5:00-6:00', '6:00-7:00', '7:00-8:00', '>8:00'];
+    const xScale = { grid: { display: false }, ticks: { color: '#64748b' } };
+
+    // 1. Overall bar chart
+    {
+        const labels = zoneNames.filter(function (z) { return data.overall[z]; });
+        const timeMins = labels.map(function (z) { return data.overall[z] ? data.overall[z].time_mins : 0; });
+        const avgHrs = labels.map(function (z) { return data.overall[z] ? data.overall[z].avg_hr : null; });
+        const colors = labels.map(function (z) { return ZONE_COLORS[z] || '#94a3b8'; });
+
+        const ctx = document.getElementById('paceZoneOverallChart').getContext('2d');
+        if (pzOverallChart) pzOverallChart.destroy();
+        pzOverallChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [
+                    { label: '累計時間(分)', data: timeMins, backgroundColor: colors.map(function (c) { return c + 'cc'; }), borderColor: colors, borderWidth: 1, borderRadius: 6, yAxisID: 'y' },
+                    { label: '平均心拍(bpm)', data: avgHrs, type: 'line', borderColor: '#64748b', backgroundColor: 'transparent', pointBackgroundColor: '#64748b', pointRadius: 5, tension: 0.3, yAxisID: 'y1' },
+                ],
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: { legend: { labels: { color: '#475569' } } },
+                scales: {
+                    x: xScale,
+                    y: { beginAtZero: true, title: { display: true, text: 'minutes', color: '#64748b' }, ticks: { color: '#64748b' }, position: 'left' },
+                    y1: { title: { display: true, text: 'avg HR (bpm)', color: '#64748b' }, ticks: { color: '#64748b' }, position: 'right', grid: { drawOnChartArea: false } },
+                },
+            },
+        });
+    }
+
+    // Period labels
+    const periods = data.time_series.map(function (p) { return p.period; });
+    const displayPeriods = periods.map(function (pk) {
+        if (/^\d{4}-\d{2}-\d{2}$/.test(pk)) {
+            var parts = pk.split('-');
+            return parts[0].slice(2) + '/' + parseInt(parts[1]) + '/' + parseInt(parts[2]) + '〜';
+        } else if (/^\d{4}-\d{2}$/.test(pk)) {
+            var parts = pk.split('-');
+            return parts[0].slice(2) + '/' + parseInt(parts[1]) + '月';
+        }
+        return pk;
+    });
+
+    function buildDatasets(field) {
+        return zoneNames.map(function (zn) {
+            return {
+                label: zn,
+                data: data.time_series.map(function (p) { return p.zones[zn] ? p.zones[zn][field] : null; }),
+                borderColor: ZONE_COLORS[zn] || '#94a3b8',
+                backgroundColor: (ZONE_COLORS[zn] || '#94a3b8') + '22',
+                tension: 0.4, spanGaps: true, pointRadius: 3, borderWidth: 2,
+            };
+        });
+    }
+
+    // 2. HR time-series
+    {
+        var ctx2 = document.getElementById('trendHrByPaceChart').getContext('2d');
+        if (trendHrByPaceChart) trendHrByPaceChart.destroy();
+        trendHrByPaceChart = new Chart(ctx2, {
+            type: 'line',
+            data: { labels: displayPeriods, datasets: buildDatasets('avg_hr') },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: { legend: { labels: { color: '#475569', usePointStyle: true } } },
+                scales: { x: xScale, y: { title: { display: true, text: '平均心拍数 (bpm)', color: '#64748b' }, ticks: { color: '#64748b' } } },
+            },
+        });
+    }
+
+    // 3. AE time-series
+    {
+        var ctx3 = document.getElementById('trendAeByPaceChart').getContext('2d');
+        if (trendAeByPaceChart) trendAeByPaceChart.destroy();
+        trendAeByPaceChart = new Chart(ctx3, {
+            type: 'line',
+            data: { labels: displayPeriods, datasets: buildDatasets('avg_ae') },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: { legend: { labels: { color: '#475569', usePointStyle: true } } },
+                scales: { x: xScale, y: { title: { display: true, text: '有酸素効率 (Speed×1000/HR)', color: '#64748b' }, ticks: { color: '#64748b' } } },
+            },
+        });
+    }
+}
+
+// Wire the buttons
+document.getElementById('btn-analyze-pace-zones') &&
+    document.getElementById('btn-analyze-pace-zones').addEventListener('click', () => fetchAndRenderPaceZoneStats(false));
+document.getElementById('btn-force-recompute') &&
+    document.getElementById('btn-force-recompute').addEventListener('click', () => fetchAndRenderPaceZoneStats(true));

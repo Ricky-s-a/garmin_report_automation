@@ -12,75 +12,91 @@ def get_supabase_client() -> Client:
         raise ValueError("Supabase credentials not found. Check SUPABASE_URL and SUPABASE_KEY in .env")
     return create_client(url, key)
 
-def parse_gpx_to_supabase(gpx_path: str, activity_id: str, supabase: Client, user_id: str = 'default_user'):
-    """Parse a downloaded GPX file and append its track points to Supabase."""
-    ns = {
-        'default': 'http://www.topografix.com/GPX/1/1',
-        'gpxtpx': 'http://www.garmin.com/xmlschemas/TrackPointExtension/v1'
-    }
-    
+import zipfile
+import tempfile
+from fitparse import FitFile
+
+def parse_fit_to_supabase(zip_path: str, activity_id: str, supabase: Client, user_id: str = 'default_user'):
+    """Extract FIT from ZIP and append its track points to Supabase."""
     try:
-        tree = ET.parse(gpx_path)
-        root = tree.getroot()
-    except Exception as e:
-        logging.warning(f"Failed to parse XML for GPX {gpx_path}: {e}")
-        return
-    
-    points = []
-    
-    for trk in root.findall('default:trk', ns):
-        for trkseg in trk.findall('default:trkseg', ns):
-            for trkpt in trkseg.findall('default:trkpt', ns):
-                lat_str = trkpt.get('lat', '')
-                lon_str = trkpt.get('lon', '')
-                
-                ele_node = trkpt.find('default:ele', ns)
-                ele_str = ele_node.text if ele_node is not None else ''
-                
-                time_node = trkpt.find('default:time', ns)
-                time_str = time_node.text if time_node is not None else ''
-                
-                hr_str = ''
-                cad_str = ''
-                
-                extensions = trkpt.find('default:extensions', ns)
-                if extensions is not None:
-                    tpe = extensions.find('gpxtpx:TrackPointExtension', ns)
-                    if tpe is not None:
-                        hr_node = tpe.find('gpxtpx:hr', ns)
-                        if hr_node is not None:
-                            hr_str = hr_node.text
-                        cad_node = tpe.find('gpxtpx:cad', ns)
-                        if cad_node is not None:
-                            cad_str = cad_node.text
-                
+        with tempfile.TemporaryDirectory() as td:
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                zip_ref.extractall(td)
+            
+            fit_file_path = None
+            for fname in os.listdir(td):
+                if fname.lower().endswith('.fit'):
+                    fit_file_path = os.path.join(td, fname)
+                    break
+            
+            if not fit_file_path:
+                logging.warning(f"No FIT file found in ZIP for activity {activity_id}")
+                return
+            
+            fitfile = FitFile(fit_file_path)
+            points = []
+            
+            for record in fitfile.get_messages('record'):
                 pt = {
                     'activityId': str(activity_id),
-                    'time': time_str,
                     'user_id': user_id,
                 }
-                if lat_str: pt['latitude'] = float(lat_str)
-                if lon_str: pt['longitude'] = float(lon_str)
-                if ele_str: pt['elevation'] = float(ele_str)
-                if hr_str: pt['heartRate'] = float(hr_str)
-                if cad_str: pt['cadence'] = float(cad_str)
-                            
-                points.append(pt)
                 
-    if not points:
-        return
-        
-    # Downsample points for multi-user MVP (1/5th to save DB cost)
-    points = points[::5]
-        
-    # Insert in batches to avoid payload size limits
-    batch_size = 500
-    for i in range(0, len(points), batch_size):
-        batch = points[i:i + batch_size]
-        try:
-            supabase.table("gpx_points").insert(batch).execute()
-        except Exception as e:
-            logging.error(f"Failed to insert GPX batch for activity {activity_id}: {e}")
+                lat, lon, ele, hr, cad, pwr, tstamp = None, None, None, None, None, None, None
+                stride, vert_osc, ground_contact = None, None, None
+                
+                for data in record:
+                    if data.value is None: continue
+                    if data.name == 'timestamp':
+                        tstamp = data.value.isoformat()
+                    elif data.name == 'position_lat':
+                        lat = data.value * (180.0 / (2**31))
+                    elif data.name == 'position_long':
+                        lon = data.value * (180.0 / (2**31))
+                    elif data.name == 'enhanced_altitude':
+                        ele = data.value
+                    elif data.name == 'heart_rate':
+                        hr = data.value
+                    elif data.name == 'cadence':
+                        cad = data.value
+                    elif data.name == 'power':
+                        pwr = data.value
+                    if getattr(data, 'def_num', None) == 90 or data.name == 'step_length':
+                        stride = data.value
+                    elif getattr(data, 'def_num', None) == 77 or data.name == 'vertical_oscillation':
+                        vert_osc = data.value
+                    elif getattr(data, 'def_num', None) == 39 or data.name == 'stance_time':
+                        ground_contact = data.value
+                
+                if tstamp:
+                    pt['time'] = tstamp
+                    if lat is not None: pt['latitude'] = lat
+                    if lon is not None: pt['longitude'] = lon
+                    if ele is not None: pt['elevation'] = ele
+                    if hr is not None: pt['heartRate'] = hr
+                    if cad is not None: pt['cadence'] = cad
+                    if pwr is not None: pt['power'] = pwr
+                    if stride is not None: pt['stride_length'] = stride
+                    if vert_osc is not None: pt['vertical_oscillation'] = vert_osc
+                    if ground_contact is not None: pt['ground_contact_time'] = ground_contact
+                    points.append(pt)
+                    
+            if not points:
+                return
+                
+            # Downsample points for multi-user MVP (1/5th to save DB cost)
+            points = points[::5]
+                
+            # Insert in batches to avoid payload size limits
+            batch_size = 500
+            for i in range(0, len(points), batch_size):
+                batch = points[i:i + batch_size]
+                try:
+                    supabase.table("gpx_points").insert(batch).execute()
+                except Exception as e:
+                    logging.error(f"Failed to insert FIT batch for activity {activity_id}: {e}")
+    except Exception as e:
+        logging.warning(f"Failed to process FIT zip {zip_path}: {e}")
 
 def fetch_garmin_data(email: str = None, password: str = None, user_id: str = None) -> list:
     """Fetch Garmin activities, generate Supabase records and GPX detail points."""
@@ -176,15 +192,15 @@ def fetch_garmin_data(email: str = None, password: str = None, user_id: str = No
                 logging.error(f"Failed to insert activity {act_id} into Supabase: {e}")
                 continue  # GPXはinsert成功時のみ
                 
-            # Download and parse GPX file
+            # Download and parse FIT file (ORIGINAL -> zip)
             try:
-                gpx_data = client.download_activity(int(act_id), dl_fmt=client.ActivityDownloadFormat.GPX)
-                gpx_path = os.path.join(gpx_dir, f"{act_id}.gpx")
-                with open(gpx_path, "wb") as gpx_file:
-                    gpx_file.write(gpx_data)
-                parse_gpx_to_supabase(gpx_path, act_id, supabase, user_id)
+                zip_data = client.download_activity(int(act_id), dl_fmt=client.ActivityDownloadFormat.ORIGINAL)
+                zip_path = os.path.join(gpx_dir, f"{act_id}.zip")
+                with open(zip_path, "wb") as zip_file:
+                    zip_file.write(zip_data)
+                parse_fit_to_supabase(zip_path, act_id, supabase, user_id)
             except Exception as e:
-                logging.warning(f"Could not download or parse GPX for activity {act_id}: {e}")
+                logging.warning(f"Could not download or parse FIT for activity {act_id}: {e}")
 
         else:
             # --- 既存アクティビティ: タイトル・ノートの変更のみ反映 ---

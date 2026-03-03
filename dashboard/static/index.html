@@ -140,6 +140,10 @@
                         <span class="value" id="val-pace">--</span>
                     </div>
                     <div class="metric-card">
+                        <span class="label">Avg GAP</span>
+                        <span class="value" id="val-gap" style="color:#8b5cf6;">--</span>
+                    </div>
+                    <div class="metric-card">
                         <span class="label">Time</span>
                         <span class="value" id="val-time">--</span>
                     </div>
@@ -150,10 +154,70 @@
                 </div>
 
                 <div class="content-grid">
+                    <div class="card chart-card" id="splits-card" style="display: none; grid-column: 1 / -1;">
+                        <h3 style="text-align: center; margin-bottom: 10px;">スプリット</h3>
+                        <div style="overflow-x: auto;">
+                            <table style="width: 100%; border-collapse: collapse; text-align: center;">
+                                <thead>
+                                    <tr style="border-bottom: 1px solid #e2e8f0; background-color: #f8fafc;">
+                                        <th style="padding: 10px; color: #475569; font-weight: 600;">距離</th>
+                                        <th style="padding: 10px; color: #475569; font-weight: 600;">タイム</th>
+                                        <th style="padding: 10px; color: #475569; font-weight: 600;">ペース</th>
+                                        <th style="padding: 10px; color: #475569; font-weight: 600;">GAP</th>
+                                        <th style="padding: 10px; color: #475569; font-weight: 600;">心拍数</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="splits-table-body">
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
                     <div class="card chart-card">
-                        <h3>Heart Rate & Elevation Profile</h3>
+                        <h3>Elevation & Heart Rate (BPM)</h3>
                         <div class="chart-container">
                             <canvas id="analysisChart"></canvas>
+                        </div>
+                    </div>
+                    <div class="card chart-card">
+                        <h3>Elevation & Pace</h3>
+                        <div class="chart-container">
+                            <canvas id="paceChart"></canvas>
+                        </div>
+                    </div>
+                    <div class="card chart-card">
+                        <h3>Elevation & GAP (換算ペース)</h3>
+                        <div class="chart-container">
+                            <canvas id="gapChart"></canvas>
+                        </div>
+                    </div>
+                    <div class="card chart-card">
+                        <h3>Elevation & Cadence</h3>
+                        <div class="chart-container">
+                            <canvas id="cadenceChart"></canvas>
+                        </div>
+                    </div>
+                    <div class="card chart-card" id="stride-card" style="display: none;">
+                        <h3>Elevation & Stride Length (歩幅)</h3>
+                        <div class="chart-container">
+                            <canvas id="strideChart"></canvas>
+                        </div>
+                    </div>
+                    <div class="card chart-card" id="oscillation-card" style="display: none;">
+                        <h3>Elevation & Vertical Oscillation (上下動)</h3>
+                        <div class="chart-container">
+                            <canvas id="oscillationChart"></canvas>
+                        </div>
+                    </div>
+                    <div class="card chart-card" id="contact-time-card" style="display: none;">
+                        <h3>Elevation & Ground Contact Time (接地時間)</h3>
+                        <div class="chart-container">
+                            <canvas id="contactTimeChart"></canvas>
+                        </div>
+                    </div>
+                    <div class="card chart-card" id="power-card" style="display: none;">
+                        <h3>Elevation & Power</h3>
+                        <div class="chart-container">
+                            <canvas id="powerChart"></canvas>
                         </div>
                     </div>
                     <div class="card chart-card">
@@ -172,64 +236,54 @@
                     <p>Track your volume and improvements over time</p>
                 </header>
 
-                <div class="nav-pills">
-                    <button id="pill-weekly" class="pill-btn active" onclick="renderTrends('weekly')">Weekly</button>
-                    <button id="pill-monthly" class="pill-btn" onclick="renderTrends('monthly')">Monthly</button>
-                    <button id="pill-yearly" class="pill-btn" onclick="renderTrends('yearly')">Yearly</button>
-                </div>
-
-                <!-- PR Panel -->
+                <!-- Weekly Progress Card -->
                 <div class="card"
                     style="margin-bottom:24px; background:linear-gradient(135deg,#1e293b,#0f172a); border:1px solid #334155;">
-                    <h3 style="color:#f1f5f9; margin-bottom:16px;">🏆 Personal Records</h3>
-                    <div class="metrics-grid">
-                        <div class="metric-card" style="background:#1e293b; border:1px solid #334155;">
-                            <span class="label" style="color:#94a3b8;">最長距離</span>
-                            <span class="value" id="pr-distance" style="color:#38bdf8;">-- km</span>
-                            <span style="font-size:0.75rem;color:#64748b;" id="pr-distance-date">--</span>
-                        </div>
-                        <div class="metric-card" style="background:#1e293b; border:1px solid #334155;">
-                            <span class="label" style="color:#94a3b8;">最速ペース</span>
-                            <span class="value" id="pr-pace" style="color:#4ade80;">--'--"</span>
-                            <span style="font-size:0.75rem;color:#64748b;" id="pr-pace-date">--</span>
-                        </div>
-                        <div class="metric-card" style="background:#1e293b; border:1px solid #334155;">
-                            <span class="label" style="color:#94a3b8;">最大獲得標高</span>
-                            <span class="value" id="pr-elevation" style="color:#fb923c;">-- m</span>
-                            <span style="font-size:0.75rem;color:#64748b;" id="pr-elevation-date">--</span>
-                        </div>
-                        <div class="metric-card" style="background:#1e293b; border:1px solid #334155;">
-                            <span class="label" style="color:#94a3b8;">最高 VO2max</span>
-                            <span class="value" id="pr-vo2" style="color:#c084fc;">--</span>
-                            <span style="font-size:0.75rem;color:#64748b;" id="pr-vo2-date">--</span>
-                        </div>
+                    <h3 style="color:#f1f5f9; margin-bottom:16px;">📈 今週の目標進捗 (月〜日)</h3>
+                    <div style="display:flex; justify-content: space-between; margin-bottom: 8px;">
+                        <span style="color:#cbd5e1; font-weight:600;" id="weekly-progress-text">0.0 / 0 km (0%)</span>
+                        <span style="color:#94a3b8; font-size:0.9rem;" id="weekly-progress-remaining">残り -- km</span>
+                    </div>
+                    <div style="background:#334155; border-radius:8px; height:12px; width:100%; overflow:hidden;">
+                        <div id="weekly-progress-bar"
+                            style="background:#10b981; height:100%; width:0%; transition: width 0.5s;"></div>
                     </div>
                 </div>
 
-                <!-- Summary Stats -->
-                <div class="metrics-grid">
-                    <div class="metric-card">
-                        <span class="label">Total Distance</span>
-                        <span class="value" id="trend-dist">0 km</span>
+                <!-- Monthly Distance Chart -->
+                <div class="card chart-card" style="margin-bottom:24px;">
+                    <h3>&#x1F4CA; 月間走行距離 (過去1年)</h3>
+                    <div class="chart-container" style="height:240px;"><canvas id="trendMonthlyDistChart"></canvas>
                     </div>
-                    <div class="metric-card">
-                        <span class="label">Total Activities</span>
-                        <span class="value" id="trend-count">0</span>
+                </div>
+
+                <!-- Period pills + Date Range Filter -->
+                <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:20px;">
+                    <div class="nav-pills" style="margin-bottom:0;">
+                        <button id="pill-weekly" class="pill-btn active"
+                            onclick="renderTrends('weekly')">Weekly</button>
+                        <button id="pill-monthly" class="pill-btn" onclick="renderTrends('monthly')">Monthly</button>
+                        <button id="pill-yearly" class="pill-btn" onclick="renderTrends('yearly')">Yearly</button>
                     </div>
-                    <div class="metric-card">
-                        <span class="label">Avg Cadence</span>
-                        <span class="value" id="trend-cadence">0 spm</span>
-                    </div>
-                    <div class="metric-card">
-                        <span class="label">Avg Stride / Pace</span>
-                        <span class="value" id="trend-pace">--:--</span>
+                    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                        <label style="font-size:0.85rem; color:#64748b; font-weight:500;">期間:</label>
+                        <input type="date" id="trend-date-from"
+                            style="padding:6px 10px; border:1px solid #cbd5e1; border-radius:8px; font-size:0.85rem; color:#334155;">
+                        <span style="color:#94a3b8;">〜</span>
+                        <input type="date" id="trend-date-to"
+                            style="padding:6px 10px; border:1px solid #cbd5e1; border-radius:8px; font-size:0.85rem; color:#334155;">
+                        <button onclick="applyTrendDateFilter()"
+                            style="padding:6px 14px; background:#10b981; color:white; border:none; border-radius:8px; cursor:pointer; font-size:0.85rem; font-weight:600;">適用</button>
+                        <button onclick="clearTrendDateFilter()"
+                            style="padding:6px 10px; background:#e2e8f0; color:#475569; border:none; border-radius:8px; cursor:pointer; font-size:0.85rem;">リセット</button>
                     </div>
                 </div>
 
                 <!-- Training Calendar -->
                 <div class="card" style="margin-bottom:24px;">
-                    <h3>📅 Training Calendar (過去52週)</h3>
-                    <p style="font-size:0.82rem;color:#64748b;margin:-8px 0 12px;">緑が濃いほど長距離のラン。</p>
+                    <h3>&#x1F4C5; Training Calendar</h3>
+                    <p style="font-size:0.82rem;color:#64748b;margin:-8px 0 12px;">緑が濃いほど長距離のラン。期間フィルターに連動して表示範囲が変わります。
+                    </p>
                     <div id="calendar-heatmap" style="overflow-x:auto;"></div>
                     <div
                         style="display:flex;align-items:center;gap:6px;margin-top:12px;font-size:0.78rem;color:#64748b;">
@@ -260,18 +314,49 @@
                     <div class="chart-container" style="height:240px;"><canvas id="trendElevationChart"></canvas></div>
                 </div>
 
-                <!-- Pace + HR -->
-                <div class="card chart-card" style="margin-bottom:24px;">
-                    <h3>💚 Running Efficiency (Pace &amp; Heart Rate)</h3>
-                    <div class="chart-container" style="height:260px;"><canvas id="trendPaceHRChart"></canvas></div>
+                <!-- TSB Warning Banner -->
+                <div id="tsb-warning-banner"
+                    style="display:none; align-items:center; gap:10px; background:linear-gradient(135deg,#450a0a,#7f1d1d); border:1px solid #ef4444; border-radius:10px; padding:14px 18px; margin-bottom:16px; color:#fecaca; font-size:0.9rem; line-height:1.5;">
                 </div>
 
-                <!-- Aerobic Efficiency -->
-                <div class="card chart-card" style="margin-bottom:24px;">
-                    <h3>🫀 有酸素効率 (Speed / Heartbeat)</h3>
-                    <p style="font-size:0.82rem;color:#64748b;margin:-8px 0 8px;">心拍1回あたりの移動距離(m×10⁻³)。値↑ = 同じ心拍でより速く =
-                        有酸素能力向上。</p>
-                    <div class="chart-container" style="height:240px;"><canvas id="trendAeChart"></canvas></div>
+                <!-- ATL/CTL Training Load -->
+                <div class="card chart-card" style="margin-bottom:12px;">
+                    <div
+                        style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px; margin-bottom:10px;">
+                        <div>
+                            <h3 style="margin:0 0 4px;">&#x1F4AA; フィットネス &amp; 疲労度 (Fitness &amp; Freshness)</h3>
+                            <p style="font-size:0.82rem;color:#64748b;margin:0;">TRIMPベースの日次CTL/ATL計算。紫線 (TSB = CTL -
+                                ATL) が現在のフォーム状態。</p>
+                        </div>
+                        <div style="display:flex; flex-wrap:wrap; gap:6px; font-size:0.75rem; align-items:center;">
+                            <span
+                                style="background:#1e3a5f; color:#93c5fd; padding:3px 8px; border-radius:12px;">&#x1F7E6;
+                                Too Fresh (TSB&gt;25)</span>
+                            <span
+                                style="background:#14532d; color:#86efac; padding:3px 8px; border-radius:12px;">&#x1F7E9;
+                                Peaked (10~25)</span>
+                            <span
+                                style="background:#78350f; color:#fde68a; padding:3px 8px; border-radius:12px;">&#x1F7E8;
+                                Fresh (0~10)</span>
+                            <span
+                                style="background:#431407; color:#fed7aa; padding:3px 8px; border-radius:12px;">&#x1F7E7;
+                                Productive (-10~0)</span>
+                            <span
+                                style="background:#450a0a; color:#fca5a5; padding:3px 8px; border-radius:12px;">&#x1F7E5;
+                                High Load (-20~-10)</span>
+                            <span
+                                style="background:#3b0764; color:#e9d5ff; padding:3px 8px; border-radius:12px;">&#x1F534;
+                                Overtraining (&lt;-20)</span>
+                        </div>
+                    </div>
+                    <div class="chart-container" style="height:300px;"><canvas id="trendAtlCtlChart"></canvas></div>
+                </div>
+                <div
+                    style="background:#f8fafc; border-left:3px solid #94a3b8; border-radius:0 6px 6px 0; padding:10px 14px; margin-bottom:24px; font-size:0.8rem; color:#64748b; line-height:1.6;">
+                    <strong>TRIMP計算式:</strong> 時間(分) &times; HR予備比 &times; 0.64 &times; e^(1.92 &times; HR予備比)
+                    &nbsp;|&nbsp;
+                    HR予備比 = (平均HR - 安静時HR) / (最大HR - 安静時HR) &nbsp;|&nbsp;
+                    &#x2699;&#xFE0F; Settingsで安静時HRを設定すると精度が向上します。
                 </div>
 
                 <!-- VO2max -->
@@ -286,6 +371,76 @@
                     <p style="font-size:0.82rem;color:#64748b;margin:-8px 0 8px;">
                         有酸素TE（青）と無酸素TE（橙）の積み上げ。ベース構築なら有酸素比率↑が理想。</p>
                     <div class="chart-container" style="height:240px;"><canvas id="trendTeChart"></canvas></div>
+                </div>
+
+                <!-- Zone 2 Proportion -->
+                <div class="card chart-card" style="margin-bottom:24px;">
+                    <h3>🫀 Easy Pace (HR Zone 2) 割合推移</h3>
+                    <p style="font-size:0.82rem;color:#64748b;margin:-8px 0 8px;">
+                        Zone2（有酸素ベース）の走行時間の割合。長距離向けには80%以上を目指すのが理想。</p>
+                    <div class="chart-container" style="height:240px;"><canvas id="trendZone2Chart"></canvas></div>
+                </div>
+
+                <!-- GPX-based Pace-Zone Analysis -->
+                <div class="card" style="margin-bottom:24px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+                        <div>
+                            <h3 style="margin:0 0 4px;">&#x1F4C1; ペース帯別 心拍数 &amp; 有酸素効率 (GPXデータ)</h3>
+                            <p style="font-size:0.82rem; color:#64748b; margin:0;">GPXの全ポイントをGAP（Grade Adjusted
+                                Pace）で補正。DBに24hキャッシュされるため、次回以降は即座に返ります。</p>
+                        </div>
+                        <div style="display:flex; gap:8px; flex-shrink:0;">
+                            <button id="btn-analyze-pace-zones" class="btn"
+                                style="background:#6366f1; color:white; border:none; padding:10px 18px; border-radius:8px; cursor:pointer; font-weight:600; white-space:nowrap;">
+                                &#x1F50D; GPX分析
+                            </button>
+                            <button id="btn-force-recompute" class="btn"
+                                style="background:#e2e8f0; color:#475569; border:none; padding:10px 14px; border-radius:8px; cursor:pointer; font-size:0.85rem; white-space:nowrap;"
+                                title="24hキャッシュを無視して強制再計算">
+                                &#x1F504; 再計算
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Loading state -->
+                    <div id="pace-zone-loading"
+                        style="display:none; align-items:center; gap:12px; padding:20px; color:#64748b;">
+                        <div
+                            style="width:20px; height:20px; border:3px solid #e2e8f0; border-top-color:#6366f1; border-radius:50%; animation:spin 0.8s linear infinite;">
+                        </div>
+                        <span id="pace-zone-loading-text">GPXデータをGAP補正付きで集計中... 初回は30秒、以降は即座に返ります。</span>
+                    </div>
+
+                    <!-- Chart area (hidden until data loaded) -->
+                    <div id="pace-zone-charts" style="display:none;">
+                        <!-- Overall bar chart -->
+                        <div style="margin-bottom:20px;">
+                            <h4 style="font-size:0.85rem; color:#475569; margin:0 0 8px;">&#x1F4CA; ペース帯ごとの累計時間 &amp;
+                                平均心拍 (全期間)</h4>
+                            <div class="chart-container" style="height:200px;"><canvas
+                                    id="paceZoneOverallChart"></canvas></div>
+                        </div>
+                        <hr style="border:none; border-top:1px solid #f1f5f9; margin:20px 0;">
+                        <!-- Time series: HR by pace zone -->
+                        <div style="margin-bottom:20px;">
+                            <h4 style="font-size:0.85rem; color:#475569; margin:0 0 4px;">&#x2764; ペース帯別 平均心拍数推移</h4>
+                            <p style="font-size:0.78rem; color:#94a3b8; margin:0 0 8px;">同じペース帯での心拍数が下がるほど有酸素能力が向上しています。
+                            </p>
+                            <div class="chart-container" style="height:260px;"><canvas id="trendHrByPaceChart"></canvas>
+                            </div>
+                        </div>
+                        <div>
+                            <h4 style="font-size:0.85rem; color:#475569; margin:0 0 4px;">&#x26A1; ペース帯別 有酸素効率
+                                (Speed/HR) 推移</h4>
+                            <p style="font-size:0.78rem; color:#94a3b8; margin:0 0 8px;">
+                                値が上昇するほどより少ない心拍数でより速く走れるようになっています。</p>
+                            <div class="chart-container" style="height:260px;"><canvas id="trendAeByPaceChart"></canvas>
+                            </div>
+                        </div>
+
+                        <p id="pace-zone-meta"
+                            style="font-size:0.75rem; color:#94a3b8; margin:12px 0 0; text-align:right;"></p>
+                    </div>
                 </div>
 
                 <!-- Cadence + Stride -->
@@ -309,47 +464,114 @@
                     <p>Predict your race time based on your past elevation-heavy runs.</p>
                 </header>
 
-                <div class="card" style="margin-bottom: 24px;">
-                    <h3>New Race Info</h3>
-                    <div style="margin-top: 12px; margin-bottom: 16px;">
-                        <label
-                            style="font-weight: 500; font-size: 0.9rem; color: #64748b; display: block; margin-bottom: 4px;">Preset
-                            Races</label>
-                        <div style="display: flex; gap: 8px; align-items: center; max-width: 400px;">
-                            <select id="trail-presets"
-                                style="padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 1rem; width: 100%; flex: 1;">
-                                <option value="">-- 手動で入力 --</option>
-                            </select>
-                            <button id="btn-edit-presets" class="btn"
-                                style="background: #94a3b8; color: white; border: none; padding: 10px 14px; border-radius: 6px; cursor: pointer;">⚙️
-                                編集</button>
-                        </div>
+                <!-- Unified Input Card -->
+                <div class="card" style="margin-bottom:24px;">
+
+                    <!-- Header -->
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+                        <h3 style="margin:0;">⛰️ レース予測設定</h3>
+                        <button id="btn-calc-trail" class="btn"
+                            style="background:#10b981; color:white; border:none; padding:10px 28px; border-radius:8px; cursor:pointer; font-weight:700; font-size:1rem; letter-spacing:0.02em;">
+                            📈 Predict Time
+                        </button>
                     </div>
 
-                    <div style="display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap;">
-                        <div>
-                            <label
-                                style="font-weight: 500; font-size: 0.9rem; color: #64748b; display: block; margin-bottom: 4px;">Target
-                                Distance (km)</label>
-                            <input type="number" id="trail-target-dist" value="25"
-                                style="padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 6px; width: 140px; font-size: 1rem;" />
+                    <!-- Two-column layout (stacks to 1 col on mobile) -->
+                    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:24px;">
+
+                        <!-- LEFT: Race Target -->
+                        <div style="display:flex; flex-direction:column; gap:14px;">
+                            <p
+                                style="font-size:0.8rem; font-weight:700; color:#94a3b8; text-transform:uppercase; letter-spacing:0.06em; margin:0;">
+                                ① レース情報</p>
+
+                            <div>
+                                <label
+                                    style="font-weight:500; font-size:0.85rem; color:#64748b; display:block; margin-bottom:4px;">Preset
+                                    Races</label>
+                                <div style="display:flex; gap:8px; align-items:center;">
+                                    <select id="trail-presets"
+                                        style="padding:9px 12px; border:1px solid #cbd5e1; border-radius:7px; font-size:0.95rem; flex:1; color:#334155;">
+                                        <option value="">―― 手動で入力 ――</option>
+                                    </select>
+                                    <button id="btn-edit-presets" class="btn"
+                                        style="background:#e2e8f0; color:#475569; border:none; padding:9px 12px; border-radius:7px; cursor:pointer; font-size:0.9rem;">⚙️</button>
+                                </div>
+                            </div>
+
+                            <div style="display:flex; gap:12px;">
+                                <div style="flex:1;">
+                                    <label
+                                        style="font-weight:500; font-size:0.85rem; color:#64748b; display:block; margin-bottom:4px;">Target
+                                        Distance (km)</label>
+                                    <input type="number" id="trail-target-dist" value="25"
+                                        style="width:100%; padding:9px 12px; border:1px solid #cbd5e1; border-radius:7px; font-size:1rem; box-sizing:border-box;" />
+                                </div>
+                                <div style="flex:1;">
+                                    <label
+                                        style="font-weight:500; font-size:0.85rem; color:#64748b; display:block; margin-bottom:4px;">Elevation
+                                        Gain (m)</label>
+                                    <input type="number" id="trail-target-elev" value="2469"
+                                        style="width:100%; padding:9px 12px; border:1px solid #cbd5e1; border-radius:7px; font-size:1rem; box-sizing:border-box;" />
+                                </div>
+                            </div>
                         </div>
-                        <div>
-                            <label
-                                style="font-weight: 500; font-size: 0.9rem; color: #64748b; display: block; margin-bottom: 4px;">Elevation
-                                Gain (m)</label>
-                            <input type="number" id="trail-target-elev" value="2469"
-                                style="padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 6px; width: 140px; font-size: 1rem;" />
+
+                        <!-- RIGHT: Base Data Filters -->
+                        <div
+                            style="display:flex; flex-direction:column; gap:14px; border-left:1px solid #f1f5f9; padding-left:24px;">
+                            <p
+                                style="font-size:0.8rem; font-weight:700; color:#94a3b8; text-transform:uppercase; letter-spacing:0.06em; margin:0;">
+                                ② 履歴データフィルター</p>
+
+                            <div style="display:flex; gap:12px;">
+                                <div style="flex:1;">
+                                    <label
+                                        style="font-size:0.85rem; color:#64748b; display:block; margin-bottom:4px;">Min
+                                        D+ (m/km)</label>
+                                    <input type="number" id="trail-filter-elev" value="30"
+                                        style="width:100%; padding:9px 10px; border:1px solid #cbd5e1; border-radius:7px; font-size:0.95rem; box-sizing:border-box;">
+                                </div>
+                                <div style="flex:1;">
+                                    <label
+                                        style="font-size:0.85rem; color:#64748b; display:block; margin-bottom:4px;">Max
+                                        Pace (min/km)</label>
+                                    <input type="number" id="trail-filter-pace" value="20"
+                                        style="width:100%; padding:9px 10px; border:1px solid #cbd5e1; border-radius:7px; font-size:0.95rem; box-sizing:border-box;">
+                                </div>
+                            </div>
+
+                            <div>
+                                <label
+                                    style="font-size:0.85rem; color:#64748b; display:block; margin-bottom:4px;">参照期間</label>
+                                <div style="display:flex; gap:8px; align-items:center;">
+                                    <input type="date" id="trail-date-from"
+                                        style="flex:1; padding:9px 10px; border:1px solid #cbd5e1; border-radius:7px; font-size:0.85rem;">
+                                    <span style="color:#94a3b8; font-size:1rem;">〜</span>
+                                    <input type="date" id="trail-date-to"
+                                        style="flex:1; padding:9px 10px; border:1px solid #cbd5e1; border-radius:7px; font-size:0.85rem;">
+                                </div>
+                            </div>
+
+                            <!-- Regression result (compact) -->
+                            <div style="background:#f8fafc; border-radius:8px; padding:10px 14px; margin-top:4px;">
+                                <p style="font-size:0.82rem; color:#64748b; margin:0 0 4px;">Trail runs detected:
+                                    <strong id="trail-base-count" style="color:#0ea5e9;">0</strong>
+                                </p>
+                                <p style="font-size:0.82rem; color:#475569; margin:0;">Model: <strong
+                                        id="trail-regression-formula" style="font-family:monospace; color:#0f172a;">a *
+                                        x + b</strong></p>
+                            </div>
                         </div>
-                        <div>
-                            <button id="btn-calc-trail" class="btn"
-                                style="background: #10b981; color: white; border: none; padding: 10px 24px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 1rem;">Predict
-                                Time</button>
-                        </div>
+
                     </div>
+
+                    <p style="font-size:0.8rem; color:#94a3b8; margin:16px 0 0;">※ 100mの上昇をフラットラ1km相当として換算（ITRA公式）</p>
                 </div>
 
-                <div class="metrics-grid">
+                <!-- Result Metrics -->
+                <!-- Result Metrics -->
+                <div class="metrics-grid" style="margin-bottom:24px;">
                     <div class="metric-card" style="border-left: 4px solid #10b981;">
                         <span class="label">Predicted Race Time</span>
                         <span class="value" id="trail-pred-time" style="color: #10b981;">--:--:--</span>
@@ -361,29 +583,6 @@
                     <div class="metric-card">
                         <span class="label">Predicted Avg Pace</span>
                         <span class="value" id="trail-pred-pace" style="font-size: 1.3rem;">--:-- /km</span>
-                    </div>
-                </div>
-
-                <div class="card chart-card">
-                    <div
-                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                        <h3 style="margin: 0;">Your Base Trail Stats (From Garmin Data)</h3>
-                        <div style="display: flex; gap: 12px; align-items: center;">
-                            <label style="font-size: 0.85rem; color: #64748b;">Min D+ (m/km):</label>
-                            <input type="number" id="trail-filter-elev" value="30"
-                                style="width: 60px; padding: 4px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 0.9rem;">
-                            <label style="font-size: 0.85rem; color: #64748b;">Max Pace (min/km):</label>
-                            <input type="number" id="trail-filter-pace" value="20"
-                                style="width: 60px; padding: 4px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 0.9rem;">
-                        </div>
-                    </div>
-                    <div style="margin-top: 10px; font-size: 0.95rem; line-height: 1.8; color: #475569;">
-                        <p>Total Known Trail Runs Detected: <strong id="trail-base-count"
-                                style="color: #0ea5e9;">0</strong></p>
-                        <p>Regression Model: <strong id="trail-regression-formula" style="color: #0f172a;">Pace (s/km) =
-                                a * D+ (m/km) + b</strong></p>
-                        <p style="font-size: 0.85rem; color: #94a3b8; margin-top: 12px;">※ The prediction treats every
-                            100m of elevation gain as 1 extra kilometer of flat running (ITRA standard formula).</p>
                     </div>
                 </div>
 
@@ -416,8 +615,19 @@
                         style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px; margin-top: 4px;">
                 </div>
                 <div>
+                    <label style="font-size: 0.85rem; font-weight: 600;">Weekly Target Distance (km)</label>
+                    <input type="number" id="settings-weekly-target" placeholder="e.g. 50"
+                        style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px; margin-top: 4px;">
+                </div>
+                <div>
                     <label style="font-size: 0.85rem; font-weight: 600;">Max Heart Rate</label>
                     <input type="number" id="settings-max-hr" placeholder="Leave blank to auto-detect from activities"
+                        style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px; margin-top: 4px;">
+                </div>
+                <div>
+                    <label style="font-size: 0.85rem; font-weight: 600;">Resting Heart Rate (bpm) <span
+                            style="font-weight:400; color:#94a3b8; font-size:0.8rem;">— TRIMP計算に使用</span></label>
+                    <input type="number" id="settings-resting-hr" placeholder="e.g. 50 (default: 55)"
                         style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px; margin-top: 4px;">
                 </div>
                 <div>
@@ -471,7 +681,7 @@
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
-    <script src="/static/dashboard.js?v=23"></script>
+    <script src="/static/dashboard.js?v=45"></script>
 </body>
 
 </html>

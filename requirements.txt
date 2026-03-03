@@ -11,3 +11,4 @@ uvicorn
 pandas
 supabase
 cryptography
+fitparse
