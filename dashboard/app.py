@@ -609,9 +609,9 @@ def _agg_activities(rows: list) -> dict | None:
         ("averageHR",                             "avg_hr",           lambda v: round(v, 1)),
         ("aerobicTrainingEffect",                 "avg_te_aerobic",   lambda v: round(v, 2)),
         ("averageRunningCadenceInStepsPerMinute", "avg_cadence_spm",  lambda v: round(v * 2, 1)),
-        ("avgStrideLength",                       "avg_stride_m",     lambda v: round(v, 3)),
-        ("avgVerticalOscillation",                "avg_vert_osc_cm",  lambda v: round(v, 1)),
-        ("avgGroundContactTime",                  "avg_gct_ms",       lambda v: round(v, 1)),
+        ("avgStrideLength",                       "avg_stride_m",     lambda v: round(v/100.0 if v >= 50 else v, 2)),
+        ("avgVerticalOscillation",                "avg_vert_osc_cm",  lambda v: round(v/10.0 if v > 20 else v, 1)),
+        ("avgGroundContactTime",                  "avg_gct_ms",       lambda v: round(v * 1000 if v < 3 else v, 0)),
     ]:
         if col in df.columns:
             vals = pd.to_numeric(df[col], errors="coerce").dropna()
@@ -825,23 +825,31 @@ def get_activity_analysis(activity_id: str, regenerate: bool = False, model: str
             gpx_filtered['lat'] = pd.to_numeric(gpx_filtered.get('latitude', 0), errors='coerce')
             gpx_filtered['lon'] = pd.to_numeric(gpx_filtered.get('longitude', 0), errors='coerce')
             
-            # Calculate distance using Haversine formula
-            lat1 = np.radians(gpx_filtered['lat'].shift())
-            lon1 = np.radians(gpx_filtered['lon'].shift())
-            lat2 = np.radians(gpx_filtered['lat'])
-            lon2 = np.radians(gpx_filtered['lon'])
-            dlon = lon2 - lon1
-            dlat = lat2 - lat1
-            a = np.sin(dlat / 2.0)**2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2.0)**2
-            c = 2 * np.arcsin(np.sqrt(a.clip(0, 1))) # clip to handle precision issues
-            km = 6371 * c
+            # Calculate distance using Haversine formula only on valid points
+            gpx_filtered['lat'] = gpx_filtered['lat'].replace(0, np.nan)
+            gpx_filtered['lon'] = gpx_filtered['lon'].replace(0, np.nan)
+            valid_idx = gpx_filtered[['lat', 'lon']].dropna().index
             
-            gpx_filtered['dist_km'] = km.fillna(0).cumsum()
+            gpx_filtered['dist_diff'] = 0.0
+            if len(valid_idx) > 0:
+                lat1 = np.radians(gpx_filtered.loc[valid_idx, 'lat'].shift())
+                lon1 = np.radians(gpx_filtered.loc[valid_idx, 'lon'].shift())
+                lat2 = np.radians(gpx_filtered.loc[valid_idx, 'lat'])
+                lon2 = np.radians(gpx_filtered.loc[valid_idx, 'lon'])
+                dlon = lon2 - lon1
+                dlat = lat2 - lat1
+                a = np.sin(dlat / 2.0)**2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2.0)**2
+                c = 2 * np.arcsin(np.sqrt(a.clip(0, 1))) # clip to handle precision issues
+                km_diff = (6371 * c).fillna(0)
+                gpx_filtered.loc[valid_idx, 'dist_diff'] = km_diff
+                
+            gpx_filtered['dist_km'] = gpx_filtered['dist_diff'].cumsum()
             gpx_filtered['km_bucket'] = np.floor(gpx_filtered['dist_km']).astype(int)
             
             trend_lines = []
             for k, chunk in gpx_filtered.groupby('km_bucket'):
                 if chunk.empty: continue
+                cum_dist = chunk['dist_km'].iloc[-1]
                 avg_hr = chunk['heartRate'].mean()
                 std_hr = chunk['heartRate'].std()
                 avg_cad = chunk['cadence'].mean()
@@ -852,10 +860,74 @@ def get_activity_analysis(activity_id: str, regenerate: bool = False, model: str
                 cad_str = f"{avg_cad:.0f}spm" if pd.notna(avg_cad) else "--"
                 ele_str = f"平{avg_ele:.0f}m(Δ{ele_diff:+.0f}m)" if pd.notna(avg_ele) else "--"
                 
-                trend_lines.append(f" - [{k}km~{k+1}km] 心拍:{hr_str}, ピッチ:{cad_str}, 標高:{ele_str}")
+                trend_lines.append(f" - [{k}km~{k+1}km] (累積:{cum_dist:.1f}km) 心拍:{hr_str}, ピッチ:{cad_str}, 標高:{ele_str}")
             
             if trend_lines:
                 gpx_summary = "【GPX 1km毎ラップ推移データ (平均値と標準偏差σ、区間内標高変化Δ)】\n" + "\n".join(trend_lines)
+                
+            try:
+                if 'time' in gpx_filtered.columns:
+                    gpx_filtered['time_dt'] = pd.to_datetime(gpx_filtered['time'], errors='coerce')
+                    gpx_filtered['dt_s'] = gpx_filtered['time_dt'].diff().dt.total_seconds().fillna(0)
+                    
+                    gpx_filtered['speed_ms'] = np.where(gpx_filtered['dt_s'] > 0, (gpx_filtered['dist_diff'] * 1000) / gpx_filtered['dt_s'], 0)
+                    ele_diff_all = gpx_filtered['elevation'].diff().fillna(0)
+                    dist_m = gpx_filtered['dist_diff'] * 1000
+                    
+                    grade_pct = np.zeros(len(gpx_filtered))
+                    dist_mask = dist_m > 0
+                    grade_pct[dist_mask] = (ele_diff_all[dist_mask] / dist_m[dist_mask] * 100)
+                    grade_pct = np.clip(grade_pct, -30.0, 45.0)
+                    
+                    effort = 1.0 + np.where(grade_pct >= 0, 0.04 * grade_pct, 0.02 * grade_pct)
+                    effort = np.clip(effort, 0.6, 3.0)
+                    gap_speed = gpx_filtered['speed_ms'] * effort
+                    
+                    def get_gap_zone(s):
+                        if s < 0.8 or s > 8.0: return None
+                        pace_s = 1000 / s
+                        if pace_s < 300: return "<5:00/km"
+                        elif pace_s < 360: return "5:00-6:00/km"
+                        elif pace_s < 420: return "6:00-7:00/km"
+                        elif pace_s < 480: return "7:00-8:00/km"
+                        else: return ">8:00/km"
+                    
+                    gpx_filtered['gap_zone'] = gap_speed.apply(get_gap_zone)
+                    
+                    sl = pd.to_numeric(gpx_filtered.get('stride_length', 0), errors='coerce').fillna(0)
+                    gpx_filtered['stride_m'] = np.where(sl >= 50, sl / 100.0, sl)
+                    
+                    vo = pd.to_numeric(gpx_filtered.get('vertical_oscillation', 0), errors='coerce').fillna(0)
+                    gpx_filtered['vo_cm'] = np.where(vo > 20, vo / 10.0, vo)
+                    
+                    gct = pd.to_numeric(gpx_filtered.get('ground_contact_time', 0), errors='coerce').fillna(0)
+                    gpx_filtered['gct_ms'] = np.where((gct < 3) & (gct > 0), gct * 1000, gct)
+                    
+                    gap_lines = []
+                    for zone in ["<5:00/km", "5:00-6:00/km", "6:00-7:00/km", "7:00-8:00/km", ">8:00/km"]:
+                        grp = gpx_filtered[gpx_filtered['gap_zone'] == zone]
+                        if grp.empty: continue
+                        dur_m = grp['dt_s'].sum() / 60.0
+                        if dur_m < 0.5: continue
+                        
+                        avg_cad = grp['cadence'].replace(0, np.nan).mean()
+                        avg_str = grp['stride_m'].replace(0, np.nan).mean()
+                        avg_vo = grp['vo_cm'].replace(0, np.nan).mean()
+                        avg_gct = grp['gct_ms'].replace(0, np.nan).mean()
+                        
+                        parts = [f"時間:{dur_m:.1f}分"]
+                        if pd.notna(avg_cad) and avg_cad > 0: parts.append(f"ピッチ:{avg_cad:.0f}spm")
+                        if pd.notna(avg_str) and avg_str > 0: parts.append(f"歩幅:{avg_str:.2f}m")
+                        if pd.notna(avg_vo) and avg_vo > 0: parts.append(f"上下動:{avg_vo:.1f}cm")
+                        if pd.notna(avg_gct) and avg_gct > 0: parts.append(f"接地:{avg_gct:.0f}ms")
+                        
+                        gap_lines.append(f" - [{zone}] " + ", ".join(parts))
+                        
+                    if gap_lines:
+                        gpx_summary += "\n\n【GAP帯（平地換算ペース）別の平均ランニングフォーム・ダイナミクス】\n" + "\n".join(gap_lines)
+            except Exception as e:
+                print(f"GAP dynamics calculate error: {e}")
+                
     except Exception as e:
         print(f"GPX parsing error: {e}")
 
@@ -864,13 +936,32 @@ def get_activity_analysis(activity_id: str, regenerate: bool = False, model: str
     cadence_str = f"{int(cadence*2)} spm" if cadence else "データなし"
     
     stride = activity.get('avgStrideLength')
-    stride_str = f"{stride} m" if stride else "データなし"
+    if stride is not None:
+        stride_val = float(stride)
+        if stride_val >= 50:
+            stride_val /= 100.0
+        stride_str = f"{stride_val:.2f} m"
+    else:
+        stride_str = "データなし"
     
     vert_osc = activity.get('avgVerticalOscillation')
-    vert_osc_str = f"{vert_osc} cm" if vert_osc else "データなし"
+    if vert_osc is not None:
+        vo_val = float(vert_osc)
+        if vo_val > 20: # Assume it's actually in mm (e.g., 85 mm -> 8.5 cm)
+            vo_val /= 10.0
+        vert_osc_str = f"{vo_val:.1f} cm"
+    else:
+        vert_osc_str = "データなし"
     
     gct = activity.get('avgGroundContactTime')
-    gct_str = f"{gct} ms" if gct else "データなし"
+    if gct is not None:
+        gct_val = float(gct)
+        # Sometimes GCT might be scaled differently, usually it's in ms (e.g. 250)
+        if gct_val < 3: # If somehow it's in seconds
+            gct_val *= 1000
+        gct_str = f"{gct_val:.0f} ms"
+    else:
+        gct_str = "データなし"
     
     aerobic_te = activity.get('aerobicTrainingEffect')
     anaerobic_te = activity.get('anaerobicTrainingEffect')
