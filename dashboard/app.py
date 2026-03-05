@@ -608,7 +608,7 @@ def _agg_activities(rows: list) -> dict | None:
         ("averageSpeed",                          "avg_pace_sec_km",  lambda v: round(1000 / v, 1) if v > 0 else None),
         ("averageHR",                             "avg_hr",           lambda v: round(v, 1)),
         ("aerobicTrainingEffect",                 "avg_te_aerobic",   lambda v: round(v, 2)),
-        ("averageRunningCadenceInStepsPerMinute", "avg_cadence_spm",  lambda v: round(v * 2, 1)),
+        ("averageRunningCadenceInStepsPerMinute", "avg_cadence_spm",  lambda v: round(v, 1)),
         ("avgStrideLength",                       "avg_stride_m",     lambda v: round(v/100.0 if v >= 50 else v, 2)),
         ("avgVerticalOscillation",                "avg_vert_osc_cm",  lambda v: round(v/10.0 if v > 20 else v, 1)),
         ("avgGroundContactTime",                  "avg_gct_ms",       lambda v: round(v * 1000 if v < 3 else v, 0)),
@@ -857,7 +857,7 @@ def get_activity_analysis(activity_id: str, regenerate: bool = False, model: str
                 ele_diff = chunk['elevation'].iloc[-1] - chunk['elevation'].iloc[0]
                 
                 hr_str = f"{avg_hr:.0f}bpm(σ{std_hr:.1f})" if pd.notna(avg_hr) else "--"
-                cad_str = f"{avg_cad:.0f}spm" if pd.notna(avg_cad) else "--"
+                cad_str = f"{avg_cad*2:.0f}spm" if pd.notna(avg_cad) else "--"
                 ele_str = f"平{avg_ele:.0f}m(Δ{ele_diff:+.0f}m)" if pd.notna(avg_ele) else "--"
                 
                 trend_lines.append(f" - [{k}km~{k+1}km] (累積:{cum_dist:.1f}km) 心拍:{hr_str}, ピッチ:{cad_str}, 標高:{ele_str}")
@@ -916,7 +916,7 @@ def get_activity_analysis(activity_id: str, regenerate: bool = False, model: str
                         avg_gct = grp['gct_ms'].replace(0, np.nan).mean()
                         
                         parts = [f"時間:{dur_m:.1f}分"]
-                        if pd.notna(avg_cad) and avg_cad > 0: parts.append(f"ピッチ:{avg_cad:.0f}spm")
+                        if pd.notna(avg_cad) and avg_cad > 0: parts.append(f"ピッチ:{avg_cad*2:.0f}spm")
                         if pd.notna(avg_str) and avg_str > 0: parts.append(f"歩幅:{avg_str:.2f}m")
                         if pd.notna(avg_vo) and avg_vo > 0: parts.append(f"上下動:{avg_vo:.1f}cm")
                         if pd.notna(avg_gct) and avg_gct > 0: parts.append(f"接地:{avg_gct:.0f}ms")
@@ -933,7 +933,7 @@ def get_activity_analysis(activity_id: str, regenerate: bool = False, model: str
 
     # Extract new advanced metrics if they exist
     cadence = activity.get('averageRunningCadenceInStepsPerMinute')
-    cadence_str = f"{int(cadence*2)} spm" if cadence else "データなし"
+    cadence_str = f"{int(cadence)} spm" if cadence else "データなし"
     
     stride = activity.get('avgStrideLength')
     if stride is not None:
