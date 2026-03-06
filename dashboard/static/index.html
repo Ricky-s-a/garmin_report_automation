@@ -438,6 +438,38 @@
                             </div>
                         </div>
 
+                        <!-- NEW CHARTS START -->
+                        <div style="margin-top:20px;">
+                            <h4 style="font-size:0.85rem; color:#475569; margin:0 0 4px;">🦶 ペース帯別 平均ピッチ (spm) 推移</h4>
+                            <p style="font-size:0.78rem; color:#94a3b8; margin:0 0 8px;">ピッチが高いほど足への負担が減るとされます。</p>
+                            <div class="chart-container" style="height:260px;"><canvas
+                                    id="trendCadenceByPaceChart"></canvas></div>
+                        </div>
+
+                        <div style="margin-top:20px;">
+                            <h4 style="font-size:0.85rem; color:#475569; margin:0 0 4px;">🏃 ペース帯別 平均ストライド (m) 推移</h4>
+                            <p style="font-size:0.78rem; color:#94a3b8; margin:0 0 8px;">ストライドが伸びると同じピッチでもスピードが上がります。
+                            </p>
+                            <div class="chart-container" style="height:260px;"><canvas
+                                    id="trendStrideByPaceChart"></canvas></div>
+                        </div>
+
+                        <div style="margin-top:20px;">
+                            <h4 style="font-size:0.85rem; color:#475569; margin:0 0 4px;">📏 ペース帯別 平均上下動 (cm) 推移</h4>
+                            <p style="font-size:0.78rem; color:#94a3b8; margin:0 0 8px;">上下動が少ないほど前方へのエネルギー効率が良くなります。
+                            </p>
+                            <div class="chart-container" style="height:260px;"><canvas
+                                    id="trendOscByPaceChart"></canvas></div>
+                        </div>
+
+                        <div style="margin-top:20px;">
+                            <h4 style="font-size:0.85rem; color:#475569; margin:0 0 4px;">⏱️ ペース帯別 平均接地時間 (ms) 推移</h4>
+                            <p style="font-size:0.78rem; color:#94a3b8; margin:0 0 8px;">接地時間が短いほどバネを使えた効率的な走りになります。</p>
+                            <div class="chart-container" style="height:260px;"><canvas
+                                    id="trendGctByPaceChart"></canvas></div>
+                        </div>
+                        <!-- NEW CHARTS END -->
+
                         <p id="pace-zone-meta"
                             style="font-size:0.75rem; color:#94a3b8; margin:12px 0 0; text-align:right;"></p>
                     </div>

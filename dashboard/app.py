@@ -263,7 +263,7 @@ def _period_key_fn(start_time_str: str, period: str):
     return dt.strftime("%Y")
 
 def _empty_zstats():
-    return {zn: {"t": 0.0, "hr_wt": 0.0, "sp_wt": 0.0} for zn in _ZONE_NAMES}
+    return {zn: {"t": 0.0, "hr_wt": 0.0, "sp_wt": 0.0, "t_cad": 0.0, "cad_wt": 0.0, "t_stride": 0.0, "stride_wt": 0.0, "t_osc": 0.0, "osc_wt": 0.0, "t_gct": 0.0, "gct_wt": 0.0} for zn in _ZONE_NAMES}
 
 def _format_zstats(stats: dict) -> dict:
     out = {}
@@ -274,10 +274,29 @@ def _format_zstats(stats: dict) -> dict:
             continue
         avg_hr = s["hr_wt"] / t if t > 0 else None
         avg_sp = s["sp_wt"] / t if t > 0 else 0.0
+        
+        avg_cadence = s["cad_wt"] / s["t_cad"] if s["t_cad"] > 0 else None
+        
+        avg_stride = s["stride_wt"] / s["t_stride"] if s["t_stride"] > 0 else None
+        if avg_stride and avg_stride >= 50:
+            avg_stride = avg_stride / 100.0
+            
+        avg_vert_osc = s["osc_wt"] / s["t_osc"] if s["t_osc"] > 0 else None
+        if avg_vert_osc and avg_vert_osc > 20:
+            avg_vert_osc = avg_vert_osc / 10.0
+            
+        avg_gct = s["gct_wt"] / s["t_gct"] if s["t_gct"] > 0 else None
+        if avg_gct and avg_gct < 3:
+            avg_gct = avg_gct * 1000.0
+
         out[zn] = {
             "time_mins": round(t / 60, 1),
             "avg_hr":    round(avg_hr, 1) if avg_hr else None,
             "avg_ae":    round(avg_sp / avg_hr * 1000, 2) if avg_hr else None,
+            "avg_cadence": round(avg_cadence, 1) if avg_cadence else None,
+            "avg_stride": round(avg_stride, 2) if avg_stride else None,
+            "avg_vert_osc": round(avg_vert_osc, 1) if avg_vert_osc else None,
+            "avg_gct": round(avg_gct, 1) if avg_gct else None,
         }
     return out
 
@@ -287,8 +306,12 @@ def _rows_to_response(overall_rows, period_rows, date_from, date_to, period):
     for r in overall_rows:
         overall[r["zone_name"]] = {
             "time_mins": r["time_mins"],
-            "avg_hr":    r["avg_hr"],
-            "avg_ae":    r["avg_ae"],
+            "avg_hr":    r.get("avg_hr"),
+            "avg_ae":    r.get("avg_ae"),
+            "avg_cadence": r.get("avg_cadence"),
+            "avg_stride": r.get("avg_stride"),
+            "avg_vert_osc": r.get("avg_vert_osc"),
+            "avg_gct": r.get("avg_gct"),
         }
 
     # filter by date range (period_key prefix)
@@ -304,8 +327,12 @@ def _rows_to_response(overall_rows, period_rows, date_from, date_to, period):
         if in_range(r["period_key"]):
             by_period[r["period_key"]][r["zone_name"]] = {
                 "time_mins": r["time_mins"],
-                "avg_hr":    r["avg_hr"],
-                "avg_ae":    r["avg_ae"],
+                "avg_hr":    r.get("avg_hr"),
+                "avg_ae":    r.get("avg_ae"),
+                "avg_cadence": r.get("avg_cadence"),
+                "avg_stride": r.get("avg_stride"),
+                "avg_vert_osc": r.get("avg_vert_osc"),
+                "avg_gct": r.get("avg_gct"),
             }
 
     time_series = [
@@ -337,6 +364,10 @@ def _save_pz_to_db(supabase, user_id: str, period: str, result: dict):
             "time_mins":   stats["time_mins"],
             "avg_hr":      stats["avg_hr"],
             "avg_ae":      stats["avg_ae"],
+            "avg_cadence": stats.get("avg_cadence"),
+            "avg_stride":  stats.get("avg_stride"),
+            "avg_vert_osc": stats.get("avg_vert_osc"),
+            "avg_gct":     stats.get("avg_gct"),
             "computed_at": now_iso,
         })
 
@@ -351,6 +382,10 @@ def _save_pz_to_db(supabase, user_id: str, period: str, result: dict):
                 "time_mins":   stats["time_mins"],
                 "avg_hr":      stats["avg_hr"],
                 "avg_ae":      stats["avg_ae"],
+                "avg_cadence": stats.get("avg_cadence"),
+                "avg_stride":  stats.get("avg_stride"),
+                "avg_vert_osc": stats.get("avg_vert_osc"),
+                "avg_gct":     stats.get("avg_gct"),
                 "computed_at": now_iso,
             })
 
@@ -448,7 +483,8 @@ def get_pace_zone_stats(
             try:
                 resp = (supabase.table("gpx_points")
                         .select("activityId,time,latitude,longitude,"
-                                "elevation,heartRate,cadence,stride_length")
+                                "elevation,heartRate,cadence,stride_length,"
+                                "vertical_oscillation,ground_contact_time")
                         .in_("activityId", chunk)
                         .order("activityId").order("time")
                         .range(offset, offset + 999)
@@ -549,10 +585,28 @@ def get_pace_zone_stats(
             except Exception:
                 continue
 
+            cad = float(p1.get("cadence") or 0)
+            stride = float(p1.get("stride_length") or 0)
+            vert_osc = float(p1.get("vertical_oscillation") or 0)
+            gct = float(p1.get("ground_contact_time") or 0)
+
             for sd in (overall[zn], pstats[zn]):
                 sd["t"]     += dt_s
                 sd["hr_wt"] += hr * dt_s
                 sd["sp_wt"] += gap_speed * dt_s   # store GAP speed
+                if cad > 100:
+                    sd["t_cad"] += dt_s
+                    sd["cad_wt"] += cad * dt_s
+                if stride > 0:
+                    sd["t_stride"] += dt_s
+                    sd["stride_wt"] += stride * dt_s
+                if vert_osc > 0:
+                    sd["t_osc"] += dt_s
+                    sd["osc_wt"] += vert_osc * dt_s
+                if gct > 0:
+                    sd["t_gct"] += dt_s
+                    sd["gct_wt"] += gct * dt_s
+
 
     # ── 6. Format ─────────────────────────────────────────────────────────── #
     time_series = [

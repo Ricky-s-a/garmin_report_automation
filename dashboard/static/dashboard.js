@@ -18,6 +18,10 @@ let trendCadenceChart;
 let trendFormChart;
 let trendHrByPaceChart;
 let trendAeByPaceChart;
+let trendCadenceByPaceChart;
+let trendStrideByPaceChart;
+let trendOscByPaceChart;
+let trendGctByPaceChart;
 let trendMonthlyDistChart;
 let trendAtlCtlChart;
 let trendZone2Chart;
@@ -1636,6 +1640,10 @@ function renderTrends(period) {
     // 4b. Activity-summary pace-zone HR/AE — removed (GPX-based section handles this)
     if (trendHrByPaceChart) { trendHrByPaceChart.destroy(); trendHrByPaceChart = null; }
     if (trendAeByPaceChart) { trendAeByPaceChart.destroy(); trendAeByPaceChart = null; }
+    if (trendCadenceByPaceChart) { trendCadenceByPaceChart.destroy(); trendCadenceByPaceChart = null; }
+    if (trendStrideByPaceChart) { trendStrideByPaceChart.destroy(); trendStrideByPaceChart = null; }
+    if (trendOscByPaceChart) { trendOscByPaceChart.destroy(); trendOscByPaceChart = null; }
+    if (trendGctByPaceChart) { trendGctByPaceChart.destroy(); trendGctByPaceChart = null; }
 
     // 5. VO2max
     const ctx5 = document.getElementById('trendVo2Chart').getContext('2d');
@@ -2348,6 +2356,70 @@ function renderPaceZoneCharts(data) {
                 interaction: { mode: 'index', intersect: false },
                 plugins: { legend: { labels: { color: '#475569', usePointStyle: true } } },
                 scales: { x: xScale, y: { title: { display: true, text: '有酸素効率 (Speed×1000/HR)', color: '#64748b' }, ticks: { color: '#64748b' } } },
+            },
+        });
+    }
+
+    // 4. Cadence time-series
+    {
+        var ctx4 = document.getElementById('trendCadenceByPaceChart').getContext('2d');
+        if (trendCadenceByPaceChart) trendCadenceByPaceChart.destroy();
+        trendCadenceByPaceChart = new Chart(ctx4, {
+            type: 'line',
+            data: { labels: displayPeriods, datasets: buildDatasets('avg_cadence') },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: { legend: { labels: { color: '#475569', usePointStyle: true } } },
+                scales: { x: xScale, y: { title: { display: true, text: '平均ピッチ (spm)', color: '#64748b' }, ticks: { color: '#64748b' } } },
+            },
+        });
+    }
+
+    // 5. Stride time-series
+    {
+        var ctx5 = document.getElementById('trendStrideByPaceChart').getContext('2d');
+        if (trendStrideByPaceChart) trendStrideByPaceChart.destroy();
+        trendStrideByPaceChart = new Chart(ctx5, {
+            type: 'line',
+            data: { labels: displayPeriods, datasets: buildDatasets('avg_stride') },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: { legend: { labels: { color: '#475569', usePointStyle: true } } },
+                scales: { x: xScale, y: { title: { display: true, text: '平均ストライド (m)', color: '#64748b' }, ticks: { color: '#64748b' } } },
+            },
+        });
+    }
+
+    // 6. Oscillation time-series
+    {
+        var ctx6 = document.getElementById('trendOscByPaceChart').getContext('2d');
+        if (trendOscByPaceChart) trendOscByPaceChart.destroy();
+        trendOscByPaceChart = new Chart(ctx6, {
+            type: 'line',
+            data: { labels: displayPeriods, datasets: buildDatasets('avg_vert_osc') },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: { legend: { labels: { color: '#475569', usePointStyle: true } } },
+                scales: { x: xScale, y: { title: { display: true, text: '平均上下動 (cm)', color: '#64748b' }, ticks: { color: '#64748b' } } },
+            },
+        });
+    }
+
+    // 7. GCT time-series
+    {
+        var ctx7 = document.getElementById('trendGctByPaceChart').getContext('2d');
+        if (trendGctByPaceChart) trendGctByPaceChart.destroy();
+        trendGctByPaceChart = new Chart(ctx7, {
+            type: 'line',
+            data: { labels: displayPeriods, datasets: buildDatasets('avg_gct') },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: { legend: { labels: { color: '#475569', usePointStyle: true } } },
+                scales: { x: xScale, y: { title: { display: true, text: '平均接地時間 (ms)', color: '#64748b' }, ticks: { color: '#64748b' } } },
             },
         });
     }
