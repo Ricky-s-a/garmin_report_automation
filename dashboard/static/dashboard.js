@@ -1677,63 +1677,9 @@ function renderTrends(period) {
         }
     });
 
-    // 7. Cadence + Stride
-    const ctx7 = document.getElementById('trendCadenceChart').getContext('2d');
-    if (trendCadenceChart) trendCadenceChart.destroy();
-    trendCadenceChart = new Chart(ctx7, {
-        type: 'line',
-        data: {
-            labels: displayLabels,
-            datasets: [
-                { label: 'Avg Cadence (spm)', data: cadenceAverages, borderColor: '#6366f1', fill: false, tension: 0.3, spanGaps: true, yAxisID: 'y' },
-                { label: 'Avg Stride Length (m)', data: strideAverages, borderColor: '#f59e0b', fill: false, tension: 0.3, spanGaps: true, yAxisID: 'y1' }
-            ]
-        },
-        options: {
-            responsive: true, maintainAspectRatio: false,
-            interaction: { mode: 'index', intersect: false },
-            scales: {
-                x: xScale,
-                y: { min: 140, max: 200, title: { display: true, text: 'Steps Per Minute', color: '#64748b' }, position: 'left', ticks: { color: '#64748b' } },
-                y1: { min: 0.5, max: 2.0, title: { display: true, text: 'Stride Length (m)', color: '#64748b' }, position: 'right', grid: { drawOnChartArea: false }, ticks: { color: '#64748b' } }
-            },
-            plugins: {
-                legend: { display: true, labels: { color: '#475569' } },
-                tooltip: {
-                    callbacks: {
-                        label: function (c) {
-                            if (c.datasetIndex === 0) return `Avg Cadence: ${c.parsed.y} spm`;
-                            return `Avg Stride: ${c.parsed.y} m`;
-                        }
-                    }
-                }
-            }
-        }
-    });
-
-    // 8. Running Dynamics (VertOsc + GCT)
-    const ctx8 = document.getElementById('trendFormChart').getContext('2d');
-    if (trendFormChart) trendFormChart.destroy();
-    trendFormChart = new Chart(ctx8, {
-        type: 'line',
-        data: {
-            labels: displayLabels,
-            datasets: [
-                { label: '上下動 (cm)', data: vertOscAvg, borderColor: '#14b8a6', backgroundColor: 'rgba(20,184,166,0.1)', fill: true, tension: 0.3, spanGaps: true, yAxisID: 'y', pointRadius: 3 },
-                { label: '接地時間 (ms)', data: gctAvg, borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.1)', fill: true, tension: 0.3, spanGaps: true, yAxisID: 'y1', pointRadius: 3 }
-            ]
-        },
-        options: {
-            responsive: true, maintainAspectRatio: false,
-            interaction: { mode: 'index', intersect: false },
-            scales: {
-                x: xScale,
-                y: { title: { display: true, text: '上下動 (cm)', color: '#14b8a6' }, position: 'left', ticks: { color: '#64748b' } },
-                y1: { title: { display: true, text: '接地時間 (ms)', color: '#f59e0b' }, position: 'right', grid: { drawOnChartArea: false }, ticks: { color: '#64748b' } }
-            },
-            plugins: { legend: { labels: { color: '#475569' } } }
-        }
-    });
+    // 7. Cadence + Stride (removed — duplicated by pace-zone section)
+    if (trendCadenceChart) { trendCadenceChart.destroy(); trendCadenceChart = null; }
+    if (trendFormChart) { trendFormChart.destroy(); trendFormChart = null; }
 }
 
 // ============== Calendar Heatmap ============== //

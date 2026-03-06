@@ -278,16 +278,19 @@ def _format_zstats(stats: dict) -> dict:
         avg_cadence = s["cad_wt"] / s["t_cad"] if s["t_cad"] > 0 else None
         
         avg_stride = s["stride_wt"] / s["t_stride"] if s["t_stride"] > 0 else None
-        if avg_stride and avg_stride >= 50:
-            avg_stride = avg_stride / 100.0
+        # GPX stride_length stored in meters now; clamp to valid range
+        if avg_stride and not (0.1 < avg_stride < 5.0):
+            avg_stride = None
             
         avg_vert_osc = s["osc_wt"] / s["t_osc"] if s["t_osc"] > 0 else None
-        if avg_vert_osc and avg_vert_osc > 20:
-            avg_vert_osc = avg_vert_osc / 10.0
+        # GPX vertical_oscillation stored in cm; clamp to valid range
+        if avg_vert_osc and not (0 < avg_vert_osc < 20):
+            avg_vert_osc = None
             
         avg_gct = s["gct_wt"] / s["t_gct"] if s["t_gct"] > 0 else None
-        if avg_gct and avg_gct < 3:
-            avg_gct = avg_gct * 1000.0
+        # GPX ground_contact_time stored in ms; clamp to valid range
+        if avg_gct and not (50 < avg_gct < 1000):
+            avg_gct = None
 
         out[zn] = {
             "time_mins": round(t / 60, 1),

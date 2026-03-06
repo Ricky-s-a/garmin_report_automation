@@ -68,12 +68,27 @@ def parse_fit_to_supabase(zip_path: str, activity_id: str, supabase: Client, use
                         cad = data.value
                     elif data.name == 'power':
                         pwr = data.value
-                    if getattr(data, 'def_num', None) == 90 or data.name == 'step_length':
-                        stride = data.value
-                    elif getattr(data, 'def_num', None) == 77 or data.name == 'vertical_oscillation':
-                        vert_osc = data.value
-                    elif getattr(data, 'def_num', None) == 39 or data.name == 'stance_time':
-                        ground_contact = data.value
+                    if getattr(data, 'def_num', None) == 140 or data.name in ('step_length', 'stride_length'):
+                        try:
+                            raw = float(data.value)
+                            # FIT stores stride_length in mm (e.g. 2099 = 2.099m)
+                            stride = raw / 1000.0 if raw > 10 else raw
+                        except Exception:
+                            pass
+                    elif getattr(data, 'def_num', None) == 135 or data.name == 'vertical_oscillation':
+                        try:
+                            raw = float(data.value)
+                            # FIT stores vertical_oscillation in mm (e.g. 35 = 3.5cm)
+                            vert_osc = raw / 10.0 if raw > 20 else raw
+                        except Exception:
+                            pass
+                    elif getattr(data, 'def_num', None) == 136 or data.name == 'stance_time':
+                        try:
+                            raw = float(data.value)
+                            # FIT stores stance_time in ms (e.g. 250ms)
+                            ground_contact = raw
+                        except Exception:
+                            pass
                 
                 if tstamp:
                     # Skip points outside the running segment for multi_sport FITs
@@ -91,9 +106,9 @@ def parse_fit_to_supabase(zip_path: str, activity_id: str, supabase: Client, use
                     if hr is not None: pt['heartRate'] = hr
                     if cad is not None: pt['cadence'] = cad
                     if pwr is not None: pt['power'] = pwr
-                    if stride is not None: pt['stride_length'] = stride
-                    if vert_osc is not None: pt['vertical_oscillation'] = vert_osc
-                    if ground_contact is not None: pt['ground_contact_time'] = ground_contact
+                    if stride is not None and 0.1 < stride < 5.0: pt['stride_length'] = stride        # valid: 0.1m–5m
+                    if vert_osc is not None and 0 < vert_osc < 20: pt['vertical_oscillation'] = vert_osc  # valid: 0–20cm
+                    if ground_contact is not None and 0 < ground_contact < 1000: pt['ground_contact_time'] = ground_contact  # valid: 0–1000ms
                     points.append(pt)
                     
             if not points:
