@@ -1,4 +1,5 @@
 import os
+import json
 import logging
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, date
@@ -18,8 +19,12 @@ import zipfile
 import tempfile
 from fitparse import FitFile
 
-def parse_fit_to_supabase(zip_path: str, activity_id: str, supabase: Client, user_id: str = 'default_user'):
-    """Extract FIT from ZIP and append its track points to Supabase."""
+def parse_fit_to_supabase(zip_path: str, activity_id: str, supabase: Client, user_id: str = 'default_user',
+                          running_start_time=None, running_end_time=None):
+    """Extract FIT from ZIP and append its track points to Supabase.
+    running_start_time / running_end_time: optional datetime objects to filter only the
+    running segment from a multi_sport FIT file.
+    """
     try:
         with tempfile.TemporaryDirectory() as td:
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
@@ -71,6 +76,14 @@ def parse_fit_to_supabase(zip_path: str, activity_id: str, supabase: Client, use
                         ground_contact = data.value
                 
                 if tstamp:
+                    # Skip points outside the running segment for multi_sport FITs
+                    if running_start_time and running_end_time:
+                        try:
+                            ts_dt = datetime.fromisoformat(tstamp.replace('Z', '+00:00'))
+                            if not (running_start_time <= ts_dt <= running_end_time):
+                                continue
+                        except Exception:
+                            pass
                     pt['time'] = tstamp
                     if lat is not None: pt['latitude'] = lat
                     if lon is not None: pt['longitude'] = lon
@@ -187,6 +200,51 @@ def fetch_garmin_data(
         if a.get('activityType', {}).get('typeKey') in ['running', 'trail_running']
         and "MyFitnessPal" not in str(a.get('activityName', ''))
     ]
+
+    # Also extract running child activities from multi_sport activities
+    multi_sport_activities = [
+        a for a in activities_all
+        if a.get('activityType', {}).get('typeKey') == 'multi_sport'
+        and a.get('parent') is True
+    ]
+    for ms_act in multi_sport_activities:
+        ms_id = ms_act.get('activityId')
+        try:
+            detail = json.loads(client.garth.download(f'/activity-service/activity/{ms_id}').decode('utf-8'))
+            child_ids = detail.get('metadataDTO', {}).get('childIds') or []
+            for child_id in child_ids:
+                try:
+                    child_detail = json.loads(client.garth.download(f'/activity-service/activity/{child_id}').decode('utf-8'))
+                    child_type = (child_detail.get('activityTypeDTO') or {}).get('typeKey', '')
+                    if child_type in ['running', 'trail_running']:
+                        # Build a flat activity dict compatible with keys_to_save
+                        s = child_detail.get('summaryDTO', {})
+                        child_flat = {
+                            'activityId': child_id,
+                            'activityName': child_detail.get('activityName', ms_act.get('activityName', '')),
+                            'startTimeLocal': s.get('startTimeLocal', '').replace('T', ' ').split('.')[0],
+                            'distance': s.get('distance'),
+                            'duration': s.get('duration'),
+                            'averageSpeed': s.get('averageSpeed'),
+                            'averageHR': s.get('averageHR'),
+                            'maxHR': s.get('maxHR'),
+                            'elevationGain': s.get('elevationGain'),
+                            'vO2MaxValue': s.get('vO2MaxValue'),
+                            'aerobicTrainingEffect': s.get('aerobicTrainingEffect'),
+                            'anaerobicTrainingEffect': s.get('anaerobicTrainingEffect'),
+                            'averageRunningCadenceInStepsPerMinute': s.get('averageRunningCadenceInStepsPerMinute'),
+                            'avgStrideLength': s.get('avgStrideLength'),
+                            'avgVerticalOscillation': s.get('avgVerticalOscillation'),
+                            'avgGroundContactTime': s.get('avgGroundContactTime'),
+                            '_is_multisport_child': True,
+                            '_parent_id': ms_id,
+                        }
+                        running_activities.append(child_flat)
+                        logging.info(f"Added multi_sport child running activity {child_id} from parent {ms_id}")
+                except Exception as e:
+                    logging.warning(f"Could not fetch multi_sport child {child_id}: {e}")
+        except Exception as e:
+            logging.warning(f"Could not fetch multi_sport details for {ms_id}: {e}")
     
     keys_to_save = [
         "activityId", "activityName", "startTimeLocal", "distance", 
@@ -219,12 +277,31 @@ def fetch_garmin_data(
                 continue  # GPXはinsert成功時のみ
                 
             # Download and parse FIT file (ORIGINAL -> zip)
+            # multi_sport child activities: download parent FIT which contains all segments
             try:
-                zip_data = client.download_activity(int(act_id), dl_fmt=client.ActivityDownloadFormat.ORIGINAL)
-                zip_path = os.path.join(gpx_dir, f"{act_id}.zip")
+                fit_download_id = activity.get('_parent_id') or int(act_id)
+                zip_data = client.download_activity(int(fit_download_id), dl_fmt=client.ActivityDownloadFormat.ORIGINAL)
+                zip_path = os.path.join(gpx_dir, f"{fit_download_id}.zip")
                 with open(zip_path, "wb") as zip_file:
                     zip_file.write(zip_data)
-                parse_fit_to_supabase(zip_path, act_id, supabase, user_id)
+                
+                # For multi_sport children, filter FIT points to running segment only
+                run_start = None
+                run_end = None
+                if activity.get('_is_multisport_child'):
+                    try:
+                        from datetime import timezone
+                        start_str = activity.get('startTimeLocal', '')
+                        dur_s = float(activity.get('duration') or 0)
+                        if start_str:
+                            # startTimeLocal is in local time - add UTC offset assumed as +0 for FIT timestamps
+                            run_start = datetime.fromisoformat(start_str).replace(tzinfo=timezone.utc)
+                            run_end = run_start + timedelta(seconds=dur_s + 5)  # +5s margin
+                    except Exception as te:
+                        logging.warning(f"Could not parse time range for multi_sport child {act_id}: {te}")
+                
+                parse_fit_to_supabase(zip_path, act_id, supabase, user_id,
+                                      running_start_time=run_start, running_end_time=run_end)
             except Exception as e:
                 logging.warning(f"Could not download or parse FIT for activity {act_id}: {e}")
 
