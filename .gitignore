@@ -17,3 +17,5 @@ ENV/
 .venv/
 
 .garth/
+
+.antigravity/

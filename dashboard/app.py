@@ -19,6 +19,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from src.garmin import fetch_garmin_data, get_supabase_client
 from src.crypto_utils import encrypt_password, decrypt_password
+from src.strava import get_auth_url, exchange_token, fetch_strava_data_with_dedup
 
 load_dotenv()
 
@@ -67,6 +68,27 @@ class CredentialRequest(BaseModel):
 class TrailPresetsRequest(BaseModel):
     user_id: str
     trail_presets: dict
+
+@app.delete("/api/account/{user_id}/data")
+def delete_activity_data(user_id: str):
+    try:
+        supabase = get_supabase_client()
+        # Delete GPX points linked to activities of this user
+        acts = supabase.table("activities").select("activityId").eq("user_id", user_id).execute()
+        if acts.data:
+            for act in acts.data:
+                supabase.table("gpx_points").delete().eq("activityId", act["activityId"]).execute()
+        
+        # Delete Activities
+        supabase.table("activities").delete().eq("user_id", user_id).execute()
+        # Delete Pace Zone Stats cache
+        supabase.table("pace_zone_stats").delete().eq("user_id", user_id).execute()
+        # Delete Rolling Stats cache
+        supabase.table("activity_rolling_stats").delete().eq("user_id", user_id).execute()
+        
+        return {"status": "success", "message": "Activity data has been deleted."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/api/account/{user_id}")
 def delete_account(user_id: str):
@@ -143,6 +165,59 @@ def save_trail_presets(req: TrailPresetsRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/strava/auth-url")
+def get_strava_auth_endpoint(user_id: str):
+    """Generate Strava OAuth URL."""
+    try:
+        url = get_auth_url()
+        return {"url": url}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/strava/callback")
+def strava_callback(req: dict):
+    """Exchange code for tokens and store in DB."""
+    code = req.get("code")
+    user_id = req.get("user_id")
+    if not code or not user_id:
+        raise HTTPException(status_code=400, detail="Missing code or user_id")
+    
+    try:
+        tokens = exchange_token(code)
+        supabase = get_supabase_client()
+        
+        data = {
+            "strava_access_token": tokens.get("access_token"),
+            "strava_refresh_token": tokens.get("refresh_token"),
+            "strava_token_expires_at": tokens.get("expires_at"),
+            "strava_athlete_id": str(tokens.get("athlete", {}).get("id"))
+        }
+        
+        # Update user_profiles - assuming user_id already exists from Garmin setup usually
+        existing = supabase.table("user_profiles").select("user_id").eq("user_id", user_id).execute()
+        if existing.data:
+            supabase.table("user_profiles").update(data).eq("user_id", user_id).execute()
+        else:
+            data["user_id"] = user_id
+            supabase.table("user_profiles").insert(data).execute()
+            
+        return {"status": "success", "athlete": tokens.get("athlete")}
+    except Exception as e:
+        logging.error(f"Strava callback error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/strava/status")
+def get_strava_status(user_id: str):
+    """Check if user has Strava linked."""
+    try:
+        supabase = get_supabase_client()
+        profile = supabase.table("user_profiles").select("strava_athlete_id").eq("user_id", user_id).execute()
+        if profile.data and profile.data[0].get("strava_athlete_id"):
+            return {"linked": True, "athlete_id": profile.data[0]["strava_athlete_id"]}
+        return {"linked": False}
+    except Exception as e:
+        return {"linked": False}
+
 @app.get("/api/trail-presets")
 def get_trail_presets(user_id: str):
     try:
@@ -156,38 +231,63 @@ def get_trail_presets(user_id: str):
 
 @app.post("/api/sync")
 def sync_data(req: SyncRequest):
+    return sync_all_data(req)
+
+@app.post("/api/sync/all")
+def sync_all_data(req: SyncRequest):
+    """Unified sync for Garmin and Strava."""
+    results = {"garmin": "skipped", "strava": "skipped"}
+    
+    # 1. Sync Garmin
     try:
         email = req.email
         password = req.password
-        
-        # If not provided directly (frontend MVP), lookup from DB
         session_tokens_dict = None
-        if not email or not password:
-            supabase = get_supabase_client()
-            profile = supabase.table("user_profiles").select("*").eq("user_id", req.user_id).execute()
-            if not profile.data:
-                raise ValueError("Garmin credentials not found for this user. Please save them first.")
-            email = profile.data[0]["garmin_email"]
-            password = decrypt_password(profile.data[0]["garmin_password_encrypted"])
+        
+        supabase = get_supabase_client()
+        profile = supabase.table("user_profiles").select("*").eq("user_id", req.user_id).execute()
+        
+        if profile.data:
+            if not email:
+                email = profile.data[0].get("garmin_email")
+            if not password and profile.data[0].get("garmin_password_encrypted"):
+                password = decrypt_password(profile.data[0]["garmin_password_encrypted"])
             session_tokens_dict = profile.data[0].get("garmin_session_tokens")
             
-        activities = fetch_garmin_data(
-            email=email, 
-            password=password, 
-            user_id=req.user_id,
-            session_tokens_dict=session_tokens_dict
-        )
-
-        # Compute and persist rolling training stats for AI analysis context
-        try:
-            supabase_client = get_supabase_client()
-            _compute_and_save_rolling_stats(supabase_client, req.user_id)
-        except Exception as stats_err:
-            logging.warning(f"Rolling stats computation failed (non-fatal): {stats_err}")
-
-        return {"status": "success", "fetched": len(activities)}
+        if email and password:
+            activities = fetch_garmin_data(
+                email=email, 
+                password=password, 
+                user_id=req.user_id,
+                session_tokens_dict=session_tokens_dict
+            )
+            results["garmin"] = {"status": "success", "fetched": len(activities)}
+        else:
+            results["garmin"] = {"status": "skipped", "reason": "No credentials"}
+            
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logging.error(f"Garmin sync error: {e}")
+        results["garmin"] = {"status": "error", "message": str(e)}
+
+    # 2. Sync Strava (always try if Garmin finishes or fails)
+    try:
+        strava_res = fetch_strava_data_with_dedup(req.user_id)
+        if strava_res:
+            results["strava"] = {"status": "success", **strava_res}
+        else:
+            results["strava"] = {"status": "not_linked"}
+    except Exception as e:
+        logging.error(f"Strava sync error: {e}")
+        results["strava"] = {"status": "error", "message": str(e)}
+
+    # Compute and persist rolling training stats
+    try:
+        supabase_client = get_supabase_client()
+        _compute_and_save_rolling_stats(supabase_client, req.user_id)
+    except Exception as stats_err:
+        logging.warning(f"Rolling stats computation failed: {stats_err}")
+
+    return {"status": "success", "results": results}
 
 @app.get("/api/activities")
 def get_activities(user_id: str = None):
@@ -288,9 +388,10 @@ def _format_zstats(stats: dict) -> dict:
             avg_vert_osc = None
             
         avg_gct = s["gct_wt"] / s["t_gct"] if s["t_gct"] > 0 else None
-        # GPX ground_contact_time stored in ms; clamp to valid range
-        if avg_gct and not (50 < avg_gct < 1000):
-            avg_gct = None
+        # GPX ground_contact_time is in ms (typically 150-400ms)
+        if avg_gct:
+            if not (150 < avg_gct < 500):
+                avg_gct = None
 
         out[zn] = {
             "time_mins": round(t / 60, 1),
@@ -588,8 +689,15 @@ def get_pace_zone_stats(
             except Exception:
                 continue
 
-            cad = float(p1.get("cadence") or 0)
+            cad_raw = float(p1.get("cadence") or 0)
+            # Garmin often stores cadence as steps for one foot (e.g. 80-95). We want SPM (160-190).
+            cad = cad_raw * 2 if 0 < cad_raw < 130 else cad_raw
+            
             stride = float(p1.get("stride_length") or 0)
+            # Garmin SDK stride is sometimes 2 footsteps. Convert to single Step Length.
+            if stride > 1.6:
+                stride = stride / 2.0
+                
             vert_osc = float(p1.get("vertical_oscillation") or 0)
             gct = float(p1.get("ground_contact_time") or 0)
 
@@ -597,7 +705,7 @@ def get_pace_zone_stats(
                 sd["t"]     += dt_s
                 sd["hr_wt"] += hr * dt_s
                 sd["sp_wt"] += gap_speed * dt_s   # store GAP speed
-                if cad > 100:
+                if cad > 100:  # already converted to SPM
                     sd["t_cad"] += dt_s
                     sd["cad_wt"] += cad * dt_s
                 if stride > 0:

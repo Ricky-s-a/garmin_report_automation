@@ -359,10 +359,35 @@
                     &#x2699;&#xFE0F; Settingsで安静時HRを設定すると精度が向上します。
                 </div>
 
-                <!-- VO2max -->
+                <!-- VO2max Section with Performance Predictor -->
                 <div class="card chart-card" style="margin-bottom:24px;">
-                    <h3>🫁 VO2max 推移</h3>
-                    <div class="chart-container" style="height:240px;"><canvas id="trendVo2Chart"></canvas></div>
+                    <div
+                        style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px;">
+                        <div>
+                            <h3>🫁 VO2max 推移 &amp; パフォーマンス予測</h3>
+                        </div>
+                        <div id="vo2-race-predictions"
+                            style="flex-shrink:0; background:#f8fafc; padding:10px 14px; border-radius:8px; border:1px solid #e2e8f0; display:none;">
+                            <strong style="color:#1e293b; display:block; margin-bottom:6px; font-size:0.85rem;">🚀 予測タイム
+                                (現在のVO2max: <span id="latest-vo2" style="color:#8b5cf6;">--</span>)</strong>
+                            <div style="display:flex; gap:16px; color:#475569;">
+                                <div style="text-align:center;"><span
+                                        style="font-size:0.75rem; color:#94a3b8; display:block; margin-bottom:2px;">5km</span><strong
+                                        id="pred-5k" style="color:#0ea5e9; font-size:0.95rem;">--:--</strong></div>
+                                <div style="text-align:center;"><span
+                                        style="font-size:0.75rem; color:#94a3b8; display:block; margin-bottom:2px;">10km</span><strong
+                                        id="pred-10k" style="color:#0ea5e9; font-size:0.95rem;">--:--</strong></div>
+                                <div style="text-align:center;"><span
+                                        style="font-size:0.75rem; color:#94a3b8; display:block; margin-bottom:2px;">Half</span><strong
+                                        id="pred-half" style="color:#0ea5e9; font-size:0.95rem;">--:--:--</strong></div>
+                                <div style="text-align:center;"><span
+                                        style="font-size:0.75rem; color:#94a3b8; display:block; margin-bottom:2px;">Full</span><strong
+                                        id="pred-full" style="color:#0ea5e9; font-size:0.95rem;">--:--:--</strong></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="chart-container" style="height:240px; margin-top:16px;"><canvas
+                            id="trendVo2Chart"></canvas></div>
                 </div>
 
                 <!-- Training Effect -->
@@ -644,6 +669,21 @@
                     <input type="number" id="settings-max-hr" placeholder="Leave blank to auto-detect from activities"
                         style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px; margin-top: 4px;">
                 </div>
+                <!-- Strava Section -->
+                <div
+                    style="margin-top: 8px; padding: 12px; background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px;">
+                    <div
+                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <span style="font-size: 0.85rem; font-weight: 700; color: #c2410c;">🧡 Strava Connection</span>
+                        <span id="strava-status-badge"
+                            style="font-size: 0.7rem; padding: 2px 6px; border-radius: 10px; background: #fdba74; color: #7c2d12;">Disconnected</span>
+                    </div>
+                    <button id="btn-strava-auth" class="btn"
+                        style="width: 100%; background: #fc4c02; color: white; border: none; padding: 8px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; font-weight: 700;">Connect
+                        with Strava</button>
+                    <p style="font-size: 0.7rem; color: #9a3412; margin-top: 6px;">GarminにないApple
+                        Watch等のデータを補完します（重複は自動排除）。</p>
+                </div>
                 <div>
                     <label style="font-size: 0.85rem; font-weight: 600;">Resting Heart Rate (bpm) <span
                             style="font-weight:400; color:#94a3b8; font-size:0.8rem;">— TRIMP計算に使用</span></label>
@@ -661,10 +701,13 @@
                         Settings</button>
                     <button id="btn-close-settings" class="btn" style="flex: 1; background: #94a3b8;">Close</button>
                 </div>
-                <div style="text-align: center; margin-top: 8px;">
+                <div style="display: flex; justify-content: space-evenly; margin-top: 8px;">
+                    <button id="btn-delete-data"
+                        style="background: none; border: none; color: #f59e0b; text-decoration: underline; cursor: pointer; font-size: 0.82rem; padding: 4px;">Delete
+                        My Activity Data</button>
                     <button id="btn-delete-account"
                         style="background: none; border: none; color: #ef4444; text-decoration: underline; cursor: pointer; font-size: 0.82rem; padding: 4px;">Delete
-                        My Data and Account</button>
+                        My Account (All Data)</button>
                 </div>
                 <div id="settings-status" style="font-size: 0.8rem; text-align: center;"></div>
             </div>

@@ -238,6 +238,7 @@ def fetch_garmin_data(
                             'activityId': child_id,
                             'activityName': child_detail.get('activityName', ms_act.get('activityName', '')),
                             'startTimeLocal': s.get('startTimeLocal', '').replace('T', ' ').split('.')[0],
+                            '_startTimeGMT': s.get('startTimeGMT', '').replace('T', ' ').split('.')[0],
                             'distance': s.get('distance'),
                             'duration': s.get('duration'),
                             'averageSpeed': s.get('averageSpeed'),
@@ -306,10 +307,10 @@ def fetch_garmin_data(
                 if activity.get('_is_multisport_child'):
                     try:
                         from datetime import timezone
-                        start_str = activity.get('startTimeLocal', '')
+                        start_str = activity.get('_startTimeGMT', '') or activity.get('startTimeLocal', '')
                         dur_s = float(activity.get('duration') or 0)
                         if start_str:
-                            # startTimeLocal is in local time - add UTC offset assumed as +0 for FIT timestamps
+                            # Use GMT so it matches the UTC timestamps in the FIT file
                             run_start = datetime.fromisoformat(start_str).replace(tzinfo=timezone.utc)
                             run_end = run_start + timedelta(seconds=dur_s + 5)  # +5s margin
                     except Exception as te:

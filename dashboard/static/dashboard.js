@@ -48,6 +48,8 @@ async function initSupabase() {
         console.log("Auth Event:", event, session?.user?.email);
         handleAuthStateChange(session);
     });
+
+    handleStravaCallback();
 }
 
 function handleAuthStateChange(session) {
@@ -237,9 +239,33 @@ function setupNavigation() {
             } catch (e) {
                 console.error("Failed to fetch settings", e);
             }
+            fetchStravaStatus();
         }
     });
     btnCloseSettings.addEventListener('click', () => modal.classList.add('hidden'));
+
+    const btnStravaAuth = document.getElementById('btn-strava-auth');
+    if (btnStravaAuth) {
+        btnStravaAuth.addEventListener('click', async () => {
+            if (!currentUser) {
+                alert("Please login first.");
+                return;
+            }
+            try {
+                const res = await fetch(`/api/strava/auth-url?user_id=${encodeURIComponent(currentUser.id)}`);
+                const data = await res.json();
+                if (data.url) {
+                    window.location.href = data.url;
+                } else if (data.detail) {
+                    alert("Strava Config Error: " + data.detail + "\n(Is STRAVA_CLIENT_ID set?)");
+                } else {
+                    alert("Failed to get Strava auth URL. Unexpected response.");
+                }
+            } catch (e) {
+                alert("Failed to connect to server: " + e.message);
+            }
+        });
+    }
 
     btnSaveCredentials.addEventListener('click', async () => {
         const email = document.getElementById('settings-garmin-email').value;
@@ -294,6 +320,38 @@ function setupNavigation() {
             btnSaveCredentials.disabled = false;
         }
     });
+
+    const btnDeleteData = document.getElementById('btn-delete-data');
+    if (btnDeleteData) {
+        btnDeleteData.addEventListener('click', async () => {
+            const confirmDelete = confirm("⚠️ 警告: アクティビティデータのみが削除されます。再度同期すれば復元可能です。\n削除を実行しますか？");
+            if (!confirmDelete) return;
+
+            const status = document.getElementById('settings-status');
+            status.textContent = "Deleting activity data...";
+            status.style.color = "#f59e0b";
+            btnDeleteData.disabled = true;
+
+            try {
+                const res = await fetch(`/api/account/${currentUser.id}/data`, {
+                    method: 'DELETE'
+                });
+                if (res.ok) {
+                    alert("アクティビティデータが正常に削除されました。");
+                    window.location.reload();
+                } else {
+                    const data = await res.json();
+                    status.textContent = "Error: " + (data.detail || "Failed to delete data.");
+                    status.style.color = "red";
+                    btnDeleteData.disabled = false;
+                }
+            } catch (e) {
+                status.textContent = "Error deleting data: " + e.message;
+                status.style.color = "red";
+                btnDeleteData.disabled = false;
+            }
+        });
+    }
 
     const btnDeleteAccount = document.getElementById('btn-delete-account');
     if (btnDeleteAccount) {
@@ -353,18 +411,22 @@ function setupNavigation() {
             }, 100);
 
             try {
-                const response = await fetch('/api/sync', {
+                const response = await fetch('/api/sync/all', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ user_id: currentUser.id })
                 });
                 const data = await response.json();
-                // ... handle response ...
-
 
                 if (response.ok) {
                     syncStatus.style.color = '#10b981';
-                    syncStatus.textContent = `Success! Fetched ${data.fetched} new activities.`;
+                    const res = data.results || {};
+                    const g = res.garmin || {};
+                    const s = res.strava || {};
+                    let msg = "";
+                    if (g.status === 'success') msg += `Garmin: +${g.fetched} `;
+                    if (s.status === 'success') msg += `Strava: +${s.new_activities} `;
+                    syncStatus.textContent = `Success! ${msg}`;
                     await fetchActivities(); // Reload list
                 } else {
                     syncStatus.style.color = '#ef4444';
@@ -410,6 +472,7 @@ async function fetchUserSettings() {
         if (res.ok) {
             const data = await res.json();
             userMaxHr = data.max_hr || null;
+            userRestingHr = data.resting_hr || parseInt(localStorage.getItem('garmin_resting_hr') || '55') || 55;
         }
     } catch (e) { console.error(e); }
 }
@@ -615,7 +678,6 @@ async function loadActivityDetails(activity, allActivities) {
 
         if (document.getElementById('btn-regen-short')) document.getElementById('btn-regen-short').addEventListener('click', () => runAnalysis(true, 'short'));
         if (document.getElementById('btn-gen-short')) document.getElementById('btn-gen-short').addEventListener('click', () => runAnalysis(false, 'short'));
-
         if (document.getElementById('btn-regen-long')) document.getElementById('btn-regen-long').addEventListener('click', () => runAnalysis(true, 'long'));
         if (document.getElementById('btn-gen-long')) document.getElementById('btn-gen-long').addEventListener('click', () => runAnalysis(false, 'long'));
     }
@@ -934,7 +996,8 @@ function updateChart(points) {
 
     const datasetsElevation = {
         label: 'Elevation (m)', data: eleData,
-        borderColor: '#94a3b8', backgroundColor: 'rgba(148, 163, 184, 0.12)',
+        borderColor: '#cbd5e1', backgroundColor: 'rgba(203, 213, 225, 0.12)',
+        borderWidth: 1.5,
         yAxisID: 'y1', tension: 0.4, fill: true, pointRadius: 0
     };
 
@@ -1430,20 +1493,25 @@ function renderTrends(period) {
     // then run exponential smoothing day-by-day and sample at each period's end date.
 
     const restHr = userRestingHr || 55;
+    // Build daily TRIMP map using logical local date (YYYY-MM-DD)
+    const dailyTRIMP = {};
     const maxHrForTrimp = userMaxHr || Math.max(...globalActivities.map(a => parseFloat(a.maxHR) || 0).filter(v => v > 100), 185);
 
-    // Build daily TRIMP map
-    const dailyTRIMP = {};
     globalActivities.forEach(act => {
-        const dateStr = (act.startTimeLocal || '').substring(0, 10);
-        if (!dateStr) return;
+        let rawDate = act.startTimeLocal || act.time || '';
+        if (!rawDate) return;
+        let dateStr = rawDate.split(' ')[0].split('T')[0]; // Get YYYY-MM-DD
+
         const dur = (parseFloat(act.duration) || 0) / 60; // minutes
         const avgHr = parseFloat(act.averageHR) || 0;
         if (dur <= 0 || avgHr <= 0) return;
+
         const hrRes = Math.min(Math.max((avgHr - restHr) / (maxHrForTrimp - restHr), 0), 1);
         const trimp = dur * hrRes * 0.64 * Math.exp(1.92 * hrRes);
         dailyTRIMP[dateStr] = (dailyTRIMP[dateStr] || 0) + trimp;
     });
+
+    console.log(`TRIMP Simulation Debug: restHr=${restHr}, maxHr=${maxHrForTrimp}, points=${Object.keys(dailyTRIMP).length}`);
 
     // Run day-by-day exponential smoothing over the full date range of our periods
     const atlDecay = Math.exp(-1 / 7);
@@ -1474,7 +1542,9 @@ function renderTrends(period) {
         } else {
             endDate = new Date(k + '-12-31');
         }
-        periodEndDateMap[k] = endDate.toISOString().substring(0, 10);
+        const lastDay = new Date(endDate);
+        const ds = `${lastDay.getFullYear()}-${(lastDay.getMonth() + 1).toString().padStart(2, '0')}-${lastDay.getDate().toString().padStart(2, '0')}`;
+        periodEndDateMap[k] = ds;
     });
 
     // Simulate day-by-day
@@ -1484,7 +1554,8 @@ function renderTrends(period) {
     if (simStart && simEnd) {
         const cur = new Date(simStart);
         while (cur <= simEnd) {
-            const ds = cur.toISOString().substring(0, 10);
+            // Use logical local date YYYY-MM-DD for matching
+            const ds = `${cur.getFullYear()}-${(cur.getMonth() + 1).toString().padStart(2, '0')}-${cur.getDate().toString().padStart(2, '0')}`;
             const load = dailyTRIMP[ds] || 0;
             atl = atl * atlDecay + load * (1 - atlDecay);
             ctl = ctl * ctlDecay + load * (1 - ctlDecay);
@@ -1645,7 +1716,60 @@ function renderTrends(period) {
     if (trendOscByPaceChart) { trendOscByPaceChart.destroy(); trendOscByPaceChart = null; }
     if (trendGctByPaceChart) { trendGctByPaceChart.destroy(); trendGctByPaceChart = null; }
 
-    // 5. VO2max
+    // 5. VO2max and Race Performance Predictor
+    let latestVo2 = null;
+    for (let i = vo2Averages.length - 1; i >= 0; i--) {
+        if (vo2Averages[i] > 0) {
+            latestVo2 = vo2Averages[i];
+            break;
+        }
+    }
+
+    if (latestVo2) {
+        document.getElementById('vo2-race-predictions').style.display = 'block';
+        document.getElementById('latest-vo2').textContent = latestVo2.toFixed(1);
+
+        const vdot_table = [
+            { v: 30, t5: 1840, t10: 3825, th: 8529, tf: 17640 },
+            { v: 35, t5: 1635, t10: 3390, th: 7500, tf: 15540 },
+            { v: 40, t5: 1447, t10: 3000, th: 6600, tf: 13680 },
+            { v: 45, t5: 1290, t10: 2670, th: 5880, tf: 12180 },
+            { v: 50, t5: 1180, t10: 2430, th: 5340, tf: 11100 },
+            { v: 55, t5: 1080, t10: 2235, th: 4920, tf: 10200 },
+            { v: 60, t5: 990, t10: 2058, th: 4530, tf: 9420 },
+            { v: 65, t5: 915, t10: 1896, th: 4188, tf: 8700 },
+            { v: 70, t5: 846, t10: 1758, th: 3870, tf: 8040 },
+            { v: 75, t5: 780, t10: 1620, th: 3585, tf: 7440 }
+        ];
+
+        function interpolateTime(vo2, key) {
+            if (vo2 <= 30) return vdot_table[0][key];
+            if (vo2 >= 75) return vdot_table[vdot_table.length - 1][key];
+            for (let i = 0; i < vdot_table.length - 1; i++) {
+                if (vo2 >= vdot_table[i].v && vo2 <= vdot_table[i + 1].v) {
+                    const ratio = (vo2 - vdot_table[i].v) / (vdot_table[i + 1].v - vdot_table[i].v);
+                    return vdot_table[i][key] + ratio * (vdot_table[i + 1][key] - vdot_table[i][key]);
+                }
+            }
+            return 0;
+        }
+
+        function formatRaceTime(s) {
+            const h = Math.floor(s / 3600);
+            const m = Math.floor((s % 3600) / 60);
+            const sec = Math.floor(s % 60);
+            if (h > 0) return `${h}:${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
+            return `${m}:${sec.toString().padStart(2, '0')}`;
+        }
+
+        document.getElementById('pred-5k').textContent = formatRaceTime(interpolateTime(latestVo2, 't5'));
+        document.getElementById('pred-10k').textContent = formatRaceTime(interpolateTime(latestVo2, 't10'));
+        document.getElementById('pred-half').textContent = formatRaceTime(interpolateTime(latestVo2, 'th'));
+        document.getElementById('pred-full').textContent = formatRaceTime(interpolateTime(latestVo2, 'tf'));
+    } else {
+        document.getElementById('vo2-race-predictions').style.display = 'none';
+    }
+
     const ctx5 = document.getElementById('trendVo2Chart').getContext('2d');
     if (trendVo2Chart) trendVo2Chart.destroy();
     trendVo2Chart = new Chart(ctx5, {
@@ -2376,3 +2500,71 @@ document.getElementById('btn-analyze-pace-zones') &&
     document.getElementById('btn-analyze-pace-zones').addEventListener('click', () => fetchAndRenderPaceZoneStats(false));
 document.getElementById('btn-force-recompute') &&
     document.getElementById('btn-force-recompute').addEventListener('click', () => fetchAndRenderPaceZoneStats(true));
+
+
+async function fetchStravaStatus() {
+    if (!currentUser) return;
+    try {
+        const res = await fetch(`/api/strava/status?user_id=${encodeURIComponent(currentUser.id)}`);
+        const data = await res.json();
+        const badge = document.getElementById('strava-status-badge');
+        const btn = document.getElementById('btn-strava-auth');
+        if (badge) {
+            if (data.linked) {
+                badge.textContent = 'Connected ✅';
+                badge.style.background = '#dcfce7';
+                badge.style.color = '#166534';
+                if (btn) btn.textContent = 'Reconnect Strava';
+            } else {
+                badge.textContent = 'Disconnected';
+                badge.style.background = '#fdba74';
+                badge.style.color = '#7c2d12';
+                if (btn) btn.textContent = 'Connect with Strava';
+            }
+        }
+    } catch (e) {
+        console.error("Strava status check failed", e);
+    }
+}
+
+async function handleStravaCallback() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const code = urlParams.get('code');
+    const scope = urlParams.get('scope');
+
+    if (code) {
+        // We have a code from Strava. Need wait for currentUser (auth)
+        console.log("Strava callback detected. Code:", code);
+
+        // Wait for currentUser to be available (poll briefly)
+        let attempts = 0;
+        const interval = setInterval(async () => {
+            attempts++;
+            if (currentUser) {
+                clearInterval(interval);
+                // Clean URL
+                window.history.replaceState({}, document.title, window.location.pathname);
+
+                try {
+                    const res = await fetch('/api/strava/callback', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ code: code, user_id: currentUser.id })
+                    });
+                    if (res.ok) {
+                        alert("Strava connected successfully!");
+                        fetchStravaStatus();
+                    } else {
+                        const err = await res.json();
+                        alert("Strava connection failed: " + (err.detail || "Unknown error"));
+                    }
+                } catch (e) {
+                    console.error("Strava callback error", e);
+                }
+            } else if (attempts > 20) {
+                clearInterval(interval);
+                console.warn("User not logged in, Strava callback aborted.");
+            }
+        }, 500);
+    }
+}
