@@ -86,13 +86,34 @@ def get_valid_access_token(supabase: Client, user_id: str):
             
     return access_token
 
-def fetch_strava_activities(access_token: str, days: int = 30):
-    after = int((datetime.now(timezone.utc) - timedelta(days=days)).timestamp())
-    r = requests.get(f"{STRAVA_API_BASE}/athlete/activities", 
-                     headers={"Authorization": f"Bearer {access_token}"},
-                     params={"after": after, "per_page": 100})
-    r.raise_for_status()
-    return r.json()
+def fetch_strava_activities(access_token: str, after_ts: int = 0):
+    """
+    Fetch all Strava activities using pagination.
+    after_ts: Unix timestamp. 0 = fetch all history.
+    per_page=200 is the Strava maximum.
+    """
+    all_activities = []
+    page = 1
+    while True:
+        params = {"per_page": 200, "page": page}
+        if after_ts:
+            params["after"] = after_ts
+        r = requests.get(
+            f"{STRAVA_API_BASE}/athlete/activities",
+            headers={"Authorization": f"Bearer {access_token}"},
+            params=params
+        )
+        r.raise_for_status()
+        batch = r.json()
+        if not batch:
+            break
+        all_activities.extend(batch)
+        if len(batch) < 200:
+            # Last page (fewer results than max)
+            break
+        page += 1
+    logging.info(f"Fetched {len(all_activities)} total Strava activities (all pages).")
+    return all_activities
 
 def fetch_strava_streams(activity_id: int, access_token: str):
     keys = "time,latlng,altitude,heartrate,cadence,distance,grade_smooth"
@@ -124,9 +145,9 @@ def fetch_strava_data_with_dedup(user_id: str):
         except:
             pass
 
-    # 2. Fetch Strava activities (past 90 days for initial/broad sync)
-    logging.info("Fetching activities from Strava...")
-    strava_acts = fetch_strava_activities(access_token, days=90)
+    # 2. Fetch ALL Strava activities (full history, paginated)
+    logging.info("Fetching all activities from Strava (full history)...")
+    strava_acts = fetch_strava_activities(access_token, after_ts=0)
     
     new_count = 0
     for s_act in strava_acts:
