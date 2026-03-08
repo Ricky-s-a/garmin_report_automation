@@ -76,8 +76,10 @@ def delete_activity_data(user_id: str):
         # Delete GPX points linked to activities of this user
         acts = supabase.table("activities").select("activityId").eq("user_id", user_id).execute()
         if acts.data:
-            for act in acts.data:
-                supabase.table("gpx_points").delete().eq("activityId", act["activityId"]).execute()
+            act_ids = [str(act["activityId"]) for act in acts.data]
+            for i in range(0, len(act_ids), 20):
+                chunk = act_ids[i:i+20]
+                supabase.table("gpx_points").delete().in_("activityId", chunk).execute()
         
         # Delete Activities
         supabase.table("activities").delete().eq("user_id", user_id).execute()
@@ -97,8 +99,10 @@ def delete_account(user_id: str):
         # Delete GPX points linked to activities of this user
         acts = supabase.table("activities").select("activityId").eq("user_id", user_id).execute()
         if acts.data:
-            for act in acts.data:
-                supabase.table("gpx_points").delete().eq("activityId", act["activityId"]).execute()
+            act_ids = [str(act["activityId"]) for act in acts.data]
+            for i in range(0, len(act_ids), 20):
+                chunk = act_ids[i:i+20]
+                supabase.table("gpx_points").delete().in_("activityId", chunk).execute()
         
         # Delete Activities
         supabase.table("activities").delete().eq("user_id", user_id).execute()

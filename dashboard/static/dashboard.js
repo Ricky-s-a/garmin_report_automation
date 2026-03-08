@@ -246,23 +246,32 @@ function setupNavigation() {
 
     const btnStravaAuth = document.getElementById('btn-strava-auth');
     if (btnStravaAuth) {
-        btnStravaAuth.addEventListener('click', async () => {
+        btnStravaAuth.addEventListener('click', async (e) => {
+            e.preventDefault();
             if (!currentUser) {
                 alert("Please login first.");
                 return;
             }
+
+            const originalText = btnStravaAuth.textContent;
+            btnStravaAuth.textContent = "Loading...";
+            btnStravaAuth.disabled = true;
+
             try {
                 const res = await fetch(`/api/strava/auth-url?user_id=${encodeURIComponent(currentUser.id)}`);
                 const data = await res.json();
                 if (data.url) {
-                    window.location.href = data.url;
+                    window.location.assign(data.url);
                 } else if (data.detail) {
-                    alert("Strava Config Error: " + data.detail + "\n(Is STRAVA_CLIENT_ID set?)");
+                    alert("Strava Config Error: " + (typeof data.detail === 'object' ? JSON.stringify(data.detail) : data.detail) + "\n(Is STRAVA_CLIENT_ID set?)");
                 } else {
                     alert("Failed to get Strava auth URL. Unexpected response.");
                 }
-            } catch (e) {
-                alert("Failed to connect to server: " + e.message);
+            } catch (err) {
+                alert("Failed to connect to server: " + err.message);
+            } finally {
+                btnStravaAuth.textContent = originalText;
+                btnStravaAuth.disabled = false;
             }
         });
     }
@@ -1717,10 +1726,14 @@ function renderTrends(period) {
     if (trendGctByPaceChart) { trendGctByPaceChart.destroy(); trendGctByPaceChart = null; }
 
     // 5. VO2max and Race Performance Predictor
+    const hasVo2Data = vo2Averages.some(v => v !== null);
+    const cardVo2 = document.getElementById('card-vo2');
+    if (cardVo2) cardVo2.style.display = 'block';
+
     let latestVo2 = null;
     for (let i = vo2Averages.length - 1; i >= 0; i--) {
-        if (vo2Averages[i] > 0) {
-            latestVo2 = vo2Averages[i];
+        if (vo2Averages[i] !== null && parseFloat(vo2Averages[i]) > 0) {
+            latestVo2 = parseFloat(vo2Averages[i]);
             break;
         }
     }
@@ -1782,7 +1795,21 @@ function renderTrends(period) {
         }
     });
 
+    if (!hasVo2Data && document.getElementById('vo2-warning') === null && cardVo2) {
+        const warning = document.createElement('div');
+        warning.id = 'vo2-warning';
+        warning.style.cssText = 'padding:10px; background:#fff7ed; border-left:3px solid #f97316; color:#9a3412; font-size:0.8rem; margin-top:10px; border-radius:4px;';
+        warning.innerHTML = '⚠️ 表示するVO2maxデータがありません（Stravaから同期されたアクティビティにはGarmin固有のVO2maxデータは含まれません。Garminのデータが消去されたわけではありませんのでご安心ください）';
+        cardVo2.appendChild(warning);
+    } else if (hasVo2Data && document.getElementById('vo2-warning')) {
+        document.getElementById('vo2-warning').remove();
+    }
+
     // 6. Training Effect (stacked bar)
+    const hasTeData = aerobicTeAvg.some(v => v !== null) || anaerobicTeAvg.some(v => v !== null);
+    const cardTe = document.getElementById('card-te');
+    if (cardTe) cardTe.style.display = 'block';
+
     const ctx6 = document.getElementById('trendTeChart').getContext('2d');
     if (trendTeChart) trendTeChart.destroy();
     trendTeChart = new Chart(ctx6, {
@@ -1800,6 +1827,16 @@ function renderTrends(period) {
             scales: { x: { stacked: true, ...xScale }, y: { stacked: true, min: 0, max: 8, ticks: { color: '#64748b' } } }
         }
     });
+
+    if (!hasTeData && document.getElementById('te-warning') === null && cardTe) {
+        const warning = document.createElement('div');
+        warning.id = 'te-warning';
+        warning.style.cssText = 'padding:10px; background:#fff7ed; border-left:3px solid #f97316; color:#9a3412; font-size:0.8rem; margin-top:10px; border-radius:4px;';
+        warning.innerHTML = '⚠️ TEデータがありません（Stravaから同期されたアクティビティにはGarmin固有のTEデータが含まれません。データが消失したわけではありません）';
+        cardTe.appendChild(warning);
+    } else if (hasTeData && document.getElementById('te-warning')) {
+        document.getElementById('te-warning').remove();
+    }
 
     // 7. Cadence + Stride (removed — duplicated by pace-zone section)
     if (trendCadenceChart) { trendCadenceChart.destroy(); trendCadenceChart = null; }

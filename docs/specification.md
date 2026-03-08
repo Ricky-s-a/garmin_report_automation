@@ -50,7 +50,9 @@
 - `/.github/workflows/`: 自動起票および定期実行用のGitHub Actionsワークフロー定義。
 - `/.antigravity/mcp_config.json`: AIエージェント用のModel Context Protocol (MCP) サーバー設定（GitHub Issue連携などに使用）。
 - `/.env`: Supabaseキー、APIキーや認可情報などの環境変数（Git管理外）。
-- `/docs/`: ドキュメント・仕様書群（本ファイル等）。
+- `/docs/`: ドキュメント・仕様書群。
+  - `specification.md`: 本システム仕様書。
+  - `deployment.md`: デプロイおよび運用ガイド。
 
 ### 3.3 データベーススキーマ (Supabase)
 本システムでは以下の主要なテーブルを用いてデータを管理しています。

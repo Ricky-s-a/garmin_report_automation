@@ -356,11 +356,12 @@
                     <strong>TRIMP計算式:</strong> 時間(分) &times; HR予備比 &times; 0.64 &times; e^(1.92 &times; HR予備比)
                     &nbsp;|&nbsp;
                     HR予備比 = (平均HR - 安静時HR) / (最大HR - 安静時HR) &nbsp;|&nbsp;
-                    &#x2699;&#xFE0F; Settingsで安静時HRを設定すると精度が向上します。
+                    &#x2699;&#xFE0F; Settingsで安静時HRを設定すると精度が向上します。<br>
+                    <span style="color:#d97706;">⚠️ 注意: Stravaデータに心拍数が含まれない場合、TRIMPは0として計算されます。</span>
                 </div>
 
                 <!-- VO2max Section with Performance Predictor -->
-                <div class="card chart-card" style="margin-bottom:24px;">
+                <div id="card-vo2" class="card chart-card" style="margin-bottom:24px;">
                     <div
                         style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px;">
                         <div>
@@ -391,7 +392,7 @@
                 </div>
 
                 <!-- Training Effect -->
-                <div class="card chart-card" style="margin-bottom:24px;">
+                <div id="card-te" class="card chart-card" style="margin-bottom:24px;">
                     <h3>⚡ トレーニング効果 (TE) 分布</h3>
                     <p style="font-size:0.82rem;color:#64748b;margin:-8px 0 8px;">
                         有酸素TE（青）と無酸素TE（橙）の積み上げ。ベース構築なら有酸素比率↑が理想。</p>
@@ -744,7 +745,7 @@
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
-    <script src="/static/dashboard.js?v=47"></script>
+    <script src="/static/dashboard.js?v=49"></script>
 </body>
 
 </html>
