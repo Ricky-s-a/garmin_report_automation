@@ -121,10 +121,14 @@ def delete_account(user_id: str):
 def save_credentials(req: CredentialRequest):
     try:
         supabase = get_supabase_client()
-        enc_pass = encrypt_password(req.garmin_password)
+        enc_pass = encrypt_password(req.garmin_password) if getattr(req, "garmin_password", None) else ""
+        email_to_save = req.garmin_email
+        if not email_to_save:
+            email_to_save = f"strava_only_{req.user_id}@dummy.com"
+            
         data = {
             "user_id": req.user_id,
-            "garmin_email": req.garmin_email,
+            "garmin_email": email_to_save,
             "garmin_password_encrypted": enc_pass,
             "runner_profile": req.runner_profile,
             "max_hr": req.max_hr
@@ -203,6 +207,7 @@ def strava_callback(req: dict):
             supabase.table("user_profiles").update(data).eq("user_id", user_id).execute()
         else:
             data["user_id"] = user_id
+            data["garmin_email"] = f"strava_only_{user_id}@dummy.com"
             supabase.table("user_profiles").insert(data).execute()
             
         return {"status": "success", "athlete": tokens.get("athlete")}
