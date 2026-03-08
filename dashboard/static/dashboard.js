@@ -437,7 +437,7 @@ function setupNavigation() {
                 syncStatus.textContent = `Error: ${e.message}`;
             } finally {
                 clearInterval(syncInterval);
-                btnSync.innerHTML = `🔄 Sync with Garmin`;
+                btnSync.innerHTML = `🔄 Sync Data`;
                 btnSync.disabled = false;
                 setTimeout(() => {
                     syncStatus.style.display = 'none';
