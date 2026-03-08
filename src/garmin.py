@@ -8,9 +8,12 @@ from supabase import create_client, Client
 
 def get_supabase_client() -> Client:
     url = os.environ.get("SUPABASE_URL", "").strip().strip('\ufeff')
-    # Use service_role key on backend to bypass RLS; fall back to anon key if not set
-    key = (os.environ.get("SUPABASE_SERVICE_KEY", "").strip().strip('\ufeff')
-           or os.environ.get("SUPABASE_KEY", "").strip().strip('\ufeff'))
+    # Use service_role key on backend to bypass RLS; check both possible env var names
+    key = (
+        os.environ.get("SUPABASE_SERVICE_KEY", "").strip().strip('\ufeff')
+        or os.environ.get("SUPABASE_service_role_secret", "").strip().strip('\ufeff')
+        or os.environ.get("SUPABASE_KEY", "").strip().strip('\ufeff')
+    )
     if not url or not key:
         raise ValueError("Supabase credentials not found. Check SUPABASE_URL and SUPABASE_KEY in .env")
     return create_client(url, key)
