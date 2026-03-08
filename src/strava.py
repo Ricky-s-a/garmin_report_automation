@@ -10,7 +10,7 @@ from src.garmin import get_supabase_client
 # Strava API Endpoints
 STRAVA_AUTH_URL = "https://www.strava.com/oauth/authorize"
 STRAVA_TOKEN_URL = "https://www.strava.com/oauth/token"
-STRAVA_API_BASE = "https://api.strava.com/api/v3"
+STRAVA_API_BASE = "https://www.strava.com/api/v3"
 
 def get_strava_config():
     client_id = os.environ.get("STRAVA_CLIENT_ID")
