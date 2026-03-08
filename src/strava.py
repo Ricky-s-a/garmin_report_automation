@@ -124,14 +124,17 @@ def fetch_strava_data_with_dedup(user_id: str):
         except:
             pass
 
-    # 2. Fetch Strava activities
+    # 2. Fetch Strava activities (past 90 days for initial/broad sync)
     logging.info("Fetching activities from Strava...")
-    strava_acts = fetch_strava_activities(access_token, days=14)
+    strava_acts = fetch_strava_activities(access_token, days=90)
     
     new_count = 0
     for s_act in strava_acts:
-        # Strava only supports runs/trail runs for this dashboard
-        if s_act.get('type') not in ['Run', 'TrailRun']:
+        # Strava: filter to Run/TrailRun only using both 'type' and 'sport_type'
+        activity_type = s_act.get('type', '')
+        sport_type = s_act.get('sport_type', '')
+        run_types = {'Run', 'TrailRun', 'VirtualRun'}
+        if activity_type not in run_types and sport_type not in run_types:
             continue
             
         s_id = s_act.get('id')
