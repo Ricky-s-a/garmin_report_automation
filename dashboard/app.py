@@ -121,18 +121,16 @@ def delete_account(user_id: str):
 def save_credentials(req: CredentialRequest):
     try:
         supabase = get_supabase_client()
-        enc_pass = encrypt_password(req.garmin_password) if getattr(req, "garmin_password", None) else ""
-        email_to_save = req.garmin_email
-        if not email_to_save:
-            email_to_save = f"strava_only_{req.user_id}@dummy.com"
-            
-        data = {
-            "user_id": req.user_id,
-            "garmin_email": email_to_save,
-            "garmin_password_encrypted": enc_pass,
-            "runner_profile": req.runner_profile,
-            "max_hr": req.max_hr
-        }
+        data = {"user_id": req.user_id}
+        if req.garmin_email:
+            data["garmin_email"] = req.garmin_email
+        if req.garmin_password:
+            data["garmin_password_encrypted"] = encrypt_password(req.garmin_password)
+        if req.runner_profile is not None:
+            data["runner_profile"] = req.runner_profile
+        if req.max_hr is not None:
+            data["max_hr"] = req.max_hr
+
         # Upsert: check if exists
         existing = supabase.table("user_profiles").select("*").eq("user_id", req.user_id).execute()
         if existing.data:
@@ -201,13 +199,12 @@ def strava_callback(req: dict):
             "strava_athlete_id": str(tokens.get("athlete", {}).get("id"))
         }
         
-        # Update user_profiles - assuming user_id already exists from Garmin setup usually
+        # Update user_profiles - upsert Strava tokens
         existing = supabase.table("user_profiles").select("user_id").eq("user_id", user_id).execute()
         if existing.data:
             supabase.table("user_profiles").update(data).eq("user_id", user_id).execute()
         else:
             data["user_id"] = user_id
-            data["garmin_email"] = f"strava_only_{user_id}@dummy.com"
             supabase.table("user_profiles").insert(data).execute()
             
         return {"status": "success", "athlete": tokens.get("athlete")}
