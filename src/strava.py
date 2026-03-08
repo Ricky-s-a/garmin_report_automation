@@ -115,6 +115,18 @@ def fetch_strava_activities(access_token: str, after_ts: int = 0):
     logging.info(f"Fetched {len(all_activities)} total Strava activities (all pages).")
     return all_activities
 
+def fetch_strava_activity_detail(activity_id: int, access_token: str):
+    """
+    Fetch a single detailed activity from Strava.
+    Includes description and other fields not in the summary.
+    """
+    r = requests.get(
+        f"{STRAVA_API_BASE}/activities/{activity_id}",
+        headers={"Authorization": f"Bearer {access_token}"}
+    )
+    r.raise_for_status()
+    return r.json()
+
 def fetch_strava_streams(activity_id: int, access_token: str):
     keys = "time,latlng,altitude,heartrate,cadence,distance,grade_smooth"
     r = requests.get(f"{STRAVA_API_BASE}/activities/{activity_id}/streams",
@@ -173,9 +185,17 @@ def fetch_strava_data_with_dedup(user_id: str):
             logging.info(f"Skipping Strava activity {s_id} (Duplicate of existing activity)")
             continue
 
-        # 3. Save Strava summary to activities table
+        # 3. Fetch detailed activity to get description/notes
+        # Strava summary list doesn't include 'description'
+        try:
+            detailed_act = fetch_strava_activity_detail(s_id, access_token)
+            description = detailed_act.get("description", "")
+        except Exception as e:
+            logging.warning(f"Failed to fetch detail for Strava activity {s_id}: {e}")
+            description = ""
+
+        # 4. Save Strava summary to activities table
         # Map Strava fields to our DB schema
-        # activityId in our DB is string. We'll prefix with 'strava_' if needed or just use numeric.
         db_id = f"strava_{s_id}"
         
         activity_data = {
@@ -189,7 +209,7 @@ def fetch_strava_data_with_dedup(user_id: str):
             "averageHR": s_act.get("average_heartrate"),
             "maxHR": s_act.get("max_heartrate"),
             "elevationGain": s_act.get("total_elevation_gain"),
-            "description": s_act.get("description", ""),
+            "description": description,
             "averageRunningCadenceInStepsPerMinute": s_act.get("average_cadence") * 2 if s_act.get("average_cadence") else None,
             "source": "strava"
         }
