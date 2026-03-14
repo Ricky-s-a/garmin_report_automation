@@ -978,11 +978,11 @@ def get_activity_gpx(activity_id: str):
         
     return df_filtered.to_dict(orient="records")
 
-def _generate_single_activity_analysis(activity_id: str, report_type: str = "long", model: str = "gemini-2.5-flash", regenerate: bool = False):
+def _generate_single_activity_analysis(activity_id: str, report_type: str = "long", model: str = "gemini-1.5-flash", regenerate: bool = False):
     # Allowlist to prevent arbitrary model injection
-    ALLOWED_MODELS = {"gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"}
+    ALLOWED_MODELS = {"gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash"}
     if model not in ALLOWED_MODELS:
-        model = "gemini-2.5-flash"
+        model = "gemini-1.5-flash"
     try:
         supabase = get_supabase_client()
         response = supabase.table("activities").select("*").eq("activityId", activity_id).execute()
@@ -1276,15 +1276,27 @@ def _generate_single_activity_analysis(activity_id: str, report_type: str = "lon
         raise Exception("GEMINI_API_KEY not set")
         
     client = genai.Client(api_key=api_key)
-    try:
-        response = client.models.generate_content(
-            model=model,
-            contents=user_content,
-            config=types.GenerateContentConfig(
-                system_instruction=system_instruction,
-            ),
-        )
-        analysis_text = response.text
+    
+    # Retry logic for 429
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = client.models.generate_content(
+                model=model,
+                contents=user_content,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_instruction,
+                ),
+            )
+            analysis_text = response.text
+            break
+        except Exception as e:
+            if "exhausted" in str(e).lower() or "429" in str(e) or attempt < max_retries - 1:
+                wait_sec = (attempt + 1) * 2
+                logging.warning(f"Gemini API limit hit. Retrying in {wait_sec}s... ({e})")
+                time_mod.sleep(wait_sec)
+                continue
+            raise Exception(f"Gemini API error after {max_retries} attempts: {e}")
         
         # Save the result back to Supabase for future use
         try:
@@ -1298,8 +1310,6 @@ def _generate_single_activity_analysis(activity_id: str, report_type: str = "lon
             print(f"Warning: failed to cache AI analysis to Supabase: {save_err}")
         
         return {"analysis": analysis_text, "model": model}
-    except Exception as e:
-        raise Exception(f"Gemini API error: {e}")
 
 import concurrent.futures
 
@@ -1348,7 +1358,7 @@ def _auto_generate_recent_reports(user_id: str, count: int = 5):
         logging.error(f"Error in _auto_generate_recent_reports: {e}")
 
 @app.get("/api/activities/{activity_id}/analysis")
-def get_activity_analysis(activity_id: str, regenerate: bool = False, model: str = "gemini-2.5-flash", report_type: str = "long"):
+def get_activity_analysis(activity_id: str, regenerate: bool = False, model: str = "gemini-1.5-flash", report_type: str = "long"):
     try:
         res = _generate_single_activity_analysis(activity_id, report_type, model, regenerate)
         return res
@@ -1356,7 +1366,7 @@ def get_activity_analysis(activity_id: str, regenerate: bool = False, model: str
         raise HTTPException(status_code=500, detail=str(e))
 @app.post("/api/trends/analysis")
 def get_trends_analysis(req: TrendsAnalysisRequest):
-    ALLOWED_MODELS = {"gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"}
+    ALLOWED_MODELS = {"gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash"}
     model = req.model if req.model in ALLOWED_MODELS else "gemini-2.0-flash"
     
     try:
@@ -1407,15 +1417,28 @@ def get_trends_analysis(req: TrendsAnalysisRequest):
             raise HTTPException(status_code=500, detail="GEMINI_API_KEY not set")
             
         client = genai.Client(api_key=api_key)
-        response = client.models.generate_content(
-            model=model,
-            contents=user_content,
-            config=types.GenerateContentConfig(
-                system_instruction=system_instruction,
-            ),
-        )
         
-        analysis_text = response.text
+        # Retry logic for 429
+        max_retries = 3
+        analysis_text = ""
+        for attempt in range(max_retries):
+            try:
+                response = client.models.generate_content(
+                    model=model,
+                    contents=user_content,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_instruction,
+                    ),
+                )
+                analysis_text = response.text
+                break
+            except Exception as e:
+                if "exhausted" in str(e).lower() or "429" in str(e) or attempt < max_retries - 1:
+                    wait_sec = (attempt + 1) * 2
+                    logging.warning(f"Gemini API limit hit in Trends. Retrying in {wait_sec}s... ({e})")
+                    time_mod.sleep(wait_sec)
+                    continue
+                raise HTTPException(status_code=500, detail=f"Gemini API error in Trends: {e}")
         
         # 7. Persist to User Profile
         try:
