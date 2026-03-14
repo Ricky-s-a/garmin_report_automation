@@ -164,10 +164,14 @@ def fetch_strava_data_with_dedup(user_id: str):
         logging.info(f"Strava not connected for user {user_id}")
         return []
 
-    # 1. Get existing activity START times (UTC) from DB to deduplicate
-    # We should select any activity regardless of source.
-    # Note: Strava's start_date is already UTC.
-    existing_q = supabase.table("activities").select("startTimeLocal, source, activityId").eq("user_id", user_id).execute()
+    # 1. Get existing activity START times from DB to deduplicate
+    # Filter to last 14 days to ensure recent activities are caught (including Garmin ones just synced)
+    fourteen_days_ago = (datetime.now(timezone.utc) - timedelta(days=14)).strftime("%Y-%m-%d")
+    existing_q = supabase.table("activities") \
+        .select("startTimeLocal, source, activityId") \
+        .eq("user_id", user_id) \
+        .gte("startTimeLocal", fourteen_days_ago) \
+        .execute()
     existing_starts_utc = []
     
     # For robust matching, we ideally need a startTimeGMT column. 
@@ -200,7 +204,7 @@ def fetch_strava_data_with_dedup(user_id: str):
         s_id = s_act.get('id')
         # Use start_date_local for consistent comparison with existing records
         s_start_str = s_act.get('start_date_local') # "2023-01-01T12:00:00Z"
-        s_start = datetime.fromisoformat(s_start_str.replace("Z", ""))
+        s_start = datetime.fromisoformat(s_start_str.replace("Z", "")).replace(tzinfo=None)
         
         # Deduplication check: +/- 5 minutes (Strava vs Garmin can have slight offsets)
         is_duplicate = False

@@ -176,8 +176,13 @@ def fetch_garmin_data(
     
     # Read existing records from Supabase to detect updates and deduplicate against Strava
     existing_records = {}  # activityId -> {activityName, description, startTimeLocal, source}
+    fourteen_days_ago = (date.today() - timedelta(days=14)).isoformat()
     try:
-        response = supabase.table("activities").select("activityId,activityName,description,startTimeLocal,source").eq("user_id", user_id).execute()
+        response = supabase.table("activities") \
+            .select("activityId,activityName,description,startTimeLocal,source") \
+            .eq("user_id", user_id) \
+            .gte("startTimeLocal", fourteen_days_ago) \
+            .execute()
         for row in response.data:
             existing_records[str(row['activityId'])] = {
                 'activityName': row.get('activityName', ''),
@@ -192,7 +197,6 @@ def fetch_garmin_data(
     activities_all = []
     start = 0
     limit = 100
-    fourteen_days_ago = (date.today() - timedelta(days=14)).isoformat()
     
     logging.info("Fetching activities from Garmin...")
     while True:
