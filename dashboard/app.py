@@ -73,6 +73,9 @@ class TrendsAnalysisRequest(BaseModel):
     user_id: str
     upcoming_menu: str
     model: str = "gemini-2.0-flash"
+    current_atl: Optional[float] = None
+    current_ctl: Optional[float] = None
+    current_tsb: Optional[float] = None
 
 class MenuRequest(BaseModel):
     user_id: str
@@ -1291,8 +1294,10 @@ def _generate_single_activity_analysis(activity_id: str, report_type: str = "lon
     except Exception as e:
         raise Exception(f"Gemini API error: {e}")
 
+import concurrent.futures
+
 def _auto_generate_recent_reports(user_id: str, count: int = 5):
-    """Automatically generate short and long reports for the last N activities if missing."""
+    """Automatically generate short and long reports for the last N activities in parallel."""
     try:
         supabase = get_supabase_client()
         # Fetch last N activities
@@ -1301,24 +1306,36 @@ def _auto_generate_recent_reports(user_id: str, count: int = 5):
         if not resp.data:
             return
             
+        tasks = []
         for act in resp.data:
             act_id = str(act["activityId"])
             
             # 1. Long report if missing
             if not act.get("aiAnalysis"):
-                try:
-                    logging.info(f"Auto-generating long report for activity {act_id}")
-                    _generate_single_activity_analysis(act_id, report_type="long")
-                except Exception as e:
-                    logging.error(f"Failed to auto-generate long report for {act_id}: {e}")
+                tasks.append((act_id, "long"))
             
             # 2. Short report if missing
             if not act.get("aiAnalysisShort"):
+                tasks.append((act_id, "short"))
+        
+        if not tasks:
+            return
+
+        logging.info(f"Auto-generating {len(tasks)} reports in parallel for user {user_id}...")
+        
+        # Parallelize Gemini calls
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            fut_to_task = {
+                executor.submit(_generate_single_activity_analysis, t[0], report_type=t[1]): t 
+                for t in tasks
+            }
+            for future in concurrent.futures.as_completed(fut_to_task):
+                task = fut_to_task[future]
                 try:
-                    logging.info(f"Auto-generating short report for activity {act_id}")
-                    _generate_single_activity_analysis(act_id, report_type="short")
+                    future.result()
+                    logging.info(f"Finished auto-generation for {task[0]} ({task[1]})")
                 except Exception as e:
-                    logging.error(f"Failed to auto-generate short report for {act_id}: {e}")
+                    logging.error(f"Failed to auto-generate {task[1]} for {task[0]}: {e}")
                     
     except Exception as e:
         logging.error(f"Error in _auto_generate_recent_reports: {e}")
@@ -1358,7 +1375,16 @@ def get_trends_analysis(req: TrendsAnalysisRequest):
             system_instruction = "You are a running coach analyzing long-term trends."
             
         # 5. Construct User Prompt
-        user_content = f"""【現在のユーザープロファイル・目標】
+        metrics_context = ""
+        if req.current_atl is not None or req.current_ctl is not None or req.current_tsb is not None:
+            metrics_context = f"""【現在のトレーニング指標】
+- ATL (疲労/短期負荷): {req.current_atl if req.current_atl is not None else "--"}
+- CTL (体力/長期負荷): {req.current_ctl if req.current_ctl is not None else "--"}
+- TSB (フォーム/バランス): {req.current_tsb if req.current_tsb is not None else "--"}
+"""
+
+        user_content = f"""{metrics_context}
+【現在のユーザープロファイル・目標】
 {runner_profile if runner_profile else "記載なし"}
 
 {rolling_context if rolling_context else "過去の統計データがまだ十分ではありません。"}

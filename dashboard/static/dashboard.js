@@ -27,6 +27,9 @@ let trendAtlCtlChart;
 let trendZone2Chart;
 let hrZoneChart;
 let lastLongTermData = null;
+let latestATL = null;
+let latestCTL = null;
+let latestTSB = null;
 // ... other charts ...
 let userMaxHr = null;
 let userRestingHr = parseInt(localStorage.getItem('garmin_resting_hr') || '55') || 55;
@@ -540,6 +543,24 @@ function speedToPace(speedMs) {
     return `${m}'${s}" /km`;
 }
 
+// Global AI rendering helper
+function renderAnalysisHtml(text) {
+    if (!text) return "";
+    let html = text;
+    // Standard headings and bold/italic
+    html = html.replace(/### (.*?)(<br\/>|$)/g, '<h5><strong>$1</strong></h5>');
+    html = html.replace(/## (.*?)(<br\/>|$)/g, '<h4><strong>$1</strong></h4>');
+    html = html.replace(/# (.*?)(<br\/>|$)/g, '<h3><strong>$1</strong></h3>');
+    html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
+    // Line breaks
+    html = html.replace(/\n\n/g, '<br><br>');
+    html = html.replace(/\n/g, '<br/>');
+    // Bullet points
+    html = html.replace(/^- (.*?)(<br\/>|$)/gm, '• $1$2');
+    return html;
+}
+
 // Utility to fetch settings early
 async function fetchUserSettings() {
     if (!currentUser) return;
@@ -659,16 +680,6 @@ async function loadActivityDetails(activity, allActivities) {
 
     // Setup AI Analysis Section
     const aiContent = document.getElementById('ai-analysis-content');
-
-    function renderAnalysisHtml(text) {
-        let html = text;
-        html = html.replace(/\n\n/g, '<br><br>');
-        html = html.replace(/\n/g, '<br/>');
-        html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-        html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
-        html = html.replace(/#(.*?)(<br\/>|$)/g, '<h4><strong>$1</strong></h4>');
-        return html;
-    }
 
     async function runAnalysis(regenerate = false, reportType = "short") {
         const selectedModel = document.getElementById('model-select')?.value || 'gemini-2.5-flash';
@@ -1672,8 +1683,10 @@ function renderTrends(period) {
         c !== null && atlValues[i] !== null ? parseFloat((c - atlValues[i]).toFixed(1)) : null
     );
 
-    // Latest TSB for warning banner
-    const latestTSB = tsbValues.length > 0 ? tsbValues[tsbValues.length - 1] : null;
+    // Latest TSB for globals and UI
+    latestATL = atlValues.length > 0 ? atlValues[atlValues.length - 1] : null;
+    latestCTL = ctlValues.length > 0 ? ctlValues[ctlValues.length - 1] : null;
+    latestTSB = tsbValues.length > 0 ? tsbValues[tsbValues.length - 1] : null;
 
     // === Zone 2 % ===
     const zone2Pct = labels.map(k => {
@@ -2759,7 +2772,10 @@ async function generateLongTermAIAnalysis() {
             body: JSON.stringify({
                 user_id: currentUser.id,
                 upcoming_menu: menuText,
-                model: selectedModel
+                model: selectedModel,
+                current_atl: latestATL,
+                current_ctl: latestCTL,
+                current_tsb: latestTSB
             })
         });
         
@@ -2804,20 +2820,9 @@ function renderStoredLongTermAnalysis(text) {
     const display = document.getElementById('longterm-ai-analysis-content');
     if (!display) return;
     
-    const renderMarkdown = (text) => {
-        let html = text;
-        html = html.replace(/\n\n/g, '<br><br>');
-        html = html.replace(/\n/g, '<br/>');
-        html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-        html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
-        html = html.replace(/#(.*?)(<br\/>|$)/g, '<h4><strong>$1</strong></h4>');
-        html = html.replace(/^- (.*?)(<br\/>|$)/gm, '• $1$2');
-        return html;
-    };
-    
     display.innerHTML = `
         <div style="background: white; border-radius: 8px; border: 1px solid #e2e8f0; padding: 20px; line-height: 1.6; font-size: 0.95rem; color: #1e293b; max-height: 600px; overflow-y: auto; margin-top: 10px;">
-            ${renderMarkdown(text)}
+            ${renderAnalysisHtml(text)}
         </div>
         <button id="btn-reset-longterm-ai" class="btn" style="background:#94a3b8; margin-top:15px; width:100%;">新しく分析する</button>
     `;
