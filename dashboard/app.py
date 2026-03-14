@@ -272,49 +272,56 @@ def sync_data(req: SyncRequest):
 @app.post("/api/sync/all")
 def sync_all_data(req: SyncRequest, background_tasks: BackgroundTasks):
     """Unified sync for Garmin and Strava."""
-    results = {"garmin": "skipped", "strava": "skipped"}
-    
-    # 1. Sync Garmin
-    try:
-        email = req.email
-        password = req.password
-        session_tokens_dict = None
-        
-        supabase = get_supabase_client()
-        profile = supabase.table("user_profiles").select("*").eq("user_id", req.user_id).execute()
-        
-        if profile.data:
-            if not email:
-                email = profile.data[0].get("garmin_email")
-            if not password and profile.data[0].get("garmin_password_encrypted"):
-                password = decrypt_password(profile.data[0]["garmin_password_encrypted"])
-            session_tokens_dict = profile.data[0].get("garmin_session_tokens")
-            
-        if email and password:
-            activities = fetch_garmin_data(
-                email=email, 
-                password=password, 
-                user_id=req.user_id,
-                session_tokens_dict=session_tokens_dict
-            )
-            results["garmin"] = {"status": "success", "fetched": len(activities)}
-        else:
-            results["garmin"] = {"status": "skipped", "reason": "No credentials"}
-            
-    except Exception as e:
-        logging.error(f"Garmin sync error: {e}")
-        results["garmin"] = {"status": "error", "message": str(e)}
+    # 1. Start Syncs in Parallel
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        # Submit Garmin sync
+        def _sync_garmin():
+            try:
+                email = req.email
+                password = req.password
+                session_tokens_dict = None
+                
+                supabase = get_supabase_client()
+                profile = supabase.table("user_profiles").select("*").eq("user_id", req.user_id).execute()
+                
+                if profile.data:
+                    if not email:
+                        email = profile.data[0].get("garmin_email")
+                    if not password and profile.data[0].get("garmin_password_encrypted"):
+                        password = decrypt_password(profile.data[0]["garmin_password_encrypted"])
+                    session_tokens_dict = profile.data[0].get("garmin_session_tokens")
+                    
+                if email and password:
+                    activities = fetch_garmin_data(
+                        email=email, 
+                        password=password, 
+                        user_id=req.user_id,
+                        session_tokens_dict=session_tokens_dict
+                    )
+                    return {"status": "success", "fetched": len(activities)}
+                else:
+                    return {"status": "skipped", "reason": "No credentials"}
+            except Exception as e:
+                logging.error(f"Garmin sync error: {e}")
+                return {"status": "error", "message": str(e)}
 
-    # 2. Sync Strava (always try if Garmin finishes or fails)
-    try:
-        strava_res = fetch_strava_data_with_dedup(req.user_id)
-        if strava_res:
-            results["strava"] = {"status": "success", **strava_res}
-        else:
-            results["strava"] = {"status": "not_linked"}
-    except Exception as e:
-        logging.error(f"Strava sync error: {e}")
-        results["strava"] = {"status": "error", "message": str(e)}
+        # Submit Strava sync
+        def _sync_strava():
+            try:
+                strava_res = fetch_strava_data_with_dedup(req.user_id)
+                if strava_res:
+                    return {"status": "success", **strava_res}
+                else:
+                    return {"status": "not_linked"}
+            except Exception as e:
+                logging.error(f"Strava sync error: {e}")
+                return {"status": "error", "message": str(e)}
+
+        future_garmin = executor.submit(_sync_garmin)
+        future_strava = executor.submit(_sync_strava)
+        
+        results["garmin"] = future_garmin.result()
+        results["strava"] = future_strava.result()
 
     # Compute and persist rolling training stats
     try:
