@@ -192,7 +192,7 @@ def fetch_garmin_data(
     activities_all = []
     start = 0
     limit = 100
-    seven_days_ago = (date.today() - timedelta(days=7)).isoformat()
+    fourteen_days_ago = (date.today() - timedelta(days=14)).isoformat()
     
     logging.info("Fetching activities from Garmin...")
     while True:
@@ -207,8 +207,8 @@ def fetch_garmin_data(
         oldest_date = str(batch[-1].get('startTimeLocal', '9999-12-31'))[:10]
         new_in_batch = [a for a in batch if str(a.get('activityId')) not in existing_ids]
         
-        # Stop if we are older than 7 days AND there are no new records in this batch
-        if oldest_date < seven_days_ago and len(new_in_batch) == 0:
+        # Stop if we are older than 14 days AND there are no new records in this batch
+        if oldest_date < fourteen_days_ago and len(new_in_batch) == 0:
             logging.info("Reached historical data that is already saved. Stopping fetch.")
             break
             
@@ -285,27 +285,36 @@ def fetch_garmin_data(
         # Issue #11: Check for Strava duplicates even if Garmin ID is new
         strava_duplicate_id = None
         if start_time_local:
-            st_dt = datetime.fromisoformat(start_time_local.replace(" ", "T"))
-            for eid, rec in existing_records.items():
-                if rec.get('source') == 'strava':
-                    est_dt = datetime.fromisoformat(rec['startTimeLocal'].replace(" ", "T"))
-                    if abs((st_dt - est_dt).total_seconds()) < 300: # 5 min margin
-                        strava_duplicate_id = eid
-                        break
+            try:
+                st_dt = datetime.fromisoformat(start_time_local.replace(" ", "T")).replace(tzinfo=None)
+                for eid, rec in existing_records.items():
+                    if rec.get('source') == 'strava':
+                        try:
+                            est_dt = datetime.fromisoformat(rec['startTimeLocal'].replace(" ", "T")).replace(tzinfo=None)
+                            if abs((st_dt - est_dt).total_seconds()) < 300: # 5 min margin
+                                strava_duplicate_id = eid
+                                break
+                        except Exception:
+                            continue
+            except Exception:
+                pass
+
+        # If we found a Strava duplicate, delete it first to prioritize Garmin.
+        # This applies even if the Garmin record already exists, to clean up any leftover duplicates.
+        if strava_duplicate_id:
+            logging.info(f"Replacing Strava activity {strava_duplicate_id} with Garmin activity {act_id}")
+            try:
+                supabase.table("activities").delete().eq("activityId", strava_duplicate_id).execute()
+                # Also delete GPX points for the Strava activity
+                supabase.table("gpx_points").delete().eq("activityId", strava_duplicate_id).execute()
+                if strava_duplicate_id in existing_ids:
+                    existing_ids.remove(strava_duplicate_id)
+                if strava_duplicate_id in existing_records:
+                    del existing_records[strava_duplicate_id]
+            except Exception as e:
+                logging.error(f"Failed to delete Strava duplicate {strava_duplicate_id}: {e}")
 
         if act_id not in existing_ids:
-            # If we found a Strava duplicate, delete it first to prioritize Garmin
-            if strava_duplicate_id:
-                logging.info(f"Replacing Strava activity {strava_duplicate_id} with Garmin activity {act_id}")
-                try:
-                    supabase.table("activities").delete().eq("activityId", strava_duplicate_id).execute()
-                    # Also delete GPX points for the Strava activity
-                    supabase.table("gpx_points").delete().eq("activityId", strava_duplicate_id).execute()
-                    if strava_duplicate_id in existing_ids:
-                        existing_ids.remove(strava_duplicate_id)
-                except Exception as e:
-                    logging.error(f"Failed to delete Strava duplicate {strava_duplicate_id}: {e}")
-
             # --- 新規アクティビティ: insert + GPXダウンロード ---
             row_data = {}
             for k in keys_to_save:
@@ -375,7 +384,7 @@ def fetch_garmin_data(
     # Return ONLY the last 7 days for Gemini to analyze
     recent_activities = [
         a for a in running_activities 
-        if str(a.get('startTimeLocal', ''))[:10] >= seven_days_ago
+        if str(a.get('startTimeLocal', ''))[:10] >= fourteen_days_ago
     ]
     
     logging.info(f"Found {len(recent_activities)} recent running activities for the weekly report.")

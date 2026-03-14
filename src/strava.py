@@ -179,7 +179,7 @@ def fetch_strava_data_with_dedup(user_id: str):
         try:
             # We assume Garmin records in DB were saved with JST or local time.
             # Strava records in DB are also saved with startTimeLocal.
-            st = datetime.fromisoformat(row['startTimeLocal'].replace(" ", "T"))
+            st = datetime.fromisoformat(row['startTimeLocal'].replace(" ", "T")).replace(tzinfo=None)
             existing_starts_utc.append(st)
         except:
             pass
