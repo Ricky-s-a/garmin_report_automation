@@ -679,9 +679,13 @@
                         <span id="strava-status-badge"
                             style="font-size: 0.7rem; padding: 2px 6px; border-radius: 10px; background: #fdba74; color: #7c2d12;">Disconnected</span>
                     </div>
-                    <button id="btn-strava-auth" class="btn"
-                        style="width: 100%; background: #fc4c02; color: white; border: none; padding: 8px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; font-weight: 700;">Connect
-                        with Strava</button>
+                    <div style="display: flex; gap: 8px;">
+                        <button id="btn-strava-auth" class="btn"
+                            style="flex: 2; background: #fc4c02; color: white; border: none; padding: 8px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; font-weight: 700;">Connect
+                            with Strava</button>
+                        <button id="btn-strava-disconnect" class="btn hidden"
+                            style="flex: 1; background: #94a3b8; color: white; border: none; padding: 8px; border-radius: 6px; cursor: pointer; font-size: 0.82rem; font-weight: 600;">Disconnect</button>
+                    </div>
                     <p style="font-size: 0.7rem; color: #9a3412; margin-top: 6px;">GarminにないApple
                         Watch等のデータを補完します（重複は自動排除）。</p>
                 </div>

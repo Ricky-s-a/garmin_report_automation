@@ -212,6 +212,20 @@ def strava_callback(req: dict):
         logging.error(f"Strava callback error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/strava/disconnect")
+def strava_disconnect(req: dict):
+    """Remove Strava tokens for user."""
+    user_id = req.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Missing user_id")
+    
+    from src.strava import disconnect_strava
+    success = disconnect_strava(user_id)
+    if success:
+        return {"status": "success"}
+    else:
+        raise HTTPException(status_code=500, detail="Failed to disconnect Strava")
+
 @app.get("/api/strava/status")
 def get_strava_status(user_id: str):
     """Check if user has Strava linked."""

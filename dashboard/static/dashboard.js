@@ -1,4 +1,4 @@
-﻿let map;
+let map;
 let polyline;
 let analysisChart;
 let paceChart;
@@ -81,6 +81,7 @@ function handleAuthStateChange(session) {
         fetchUserSettings();
         fetchActivities();
         fetchUserTrailPresets(); // Fetch user-specific presets
+        fetchStravaStatus();
     } else {
         if (loggedOutSection) loggedOutSection.classList.remove('hidden');
         if (loggedInSection) loggedInSection.classList.add('hidden');
@@ -1005,8 +1006,9 @@ function updateChart(points) {
 
     const datasetsElevation = {
         label: 'Elevation (m)', data: eleData,
-        borderColor: '#cbd5e1', backgroundColor: 'rgba(203, 213, 225, 0.12)',
-        borderWidth: 1.5,
+        borderColor: '#cbd5e1', // Lighter grey as requested
+        backgroundColor: 'rgba(203, 213, 225, 0.08)', // Subtle background
+        borderWidth: 1.0, // Thinner line
         yAxisID: 'y1', tension: 0.4, fill: true, pointRadius: 0
     };
 
@@ -2545,24 +2547,49 @@ async function fetchStravaStatus() {
         const res = await fetch(`/api/strava/status?user_id=${encodeURIComponent(currentUser.id)}`);
         const data = await res.json();
         const badge = document.getElementById('strava-status-badge');
-        const btn = document.getElementById('btn-strava-auth');
+        const btnAuth = document.getElementById('btn-strava-auth');
+        const btnDisc = document.getElementById('btn-strava-disconnect');
         if (badge) {
             if (data.linked) {
                 badge.textContent = 'Connected ✅';
                 badge.style.background = '#dcfce7';
                 badge.style.color = '#166534';
-                if (btn) btn.textContent = 'Reconnect Strava';
+                if (btnAuth) btnAuth.textContent = 'Reconnect Strava';
+                if (btnDisc) btnDisc.classList.remove('hidden');
             } else {
                 badge.textContent = 'Disconnected';
                 badge.style.background = '#fdba74';
                 badge.style.color = '#7c2d12';
-                if (btn) btn.textContent = 'Connect with Strava';
+                if (btnAuth) btnAuth.textContent = 'Connect with Strava';
+                if (btnDisc) btnDisc.classList.add('hidden');
             }
         }
     } catch (e) {
         console.error("Strava status check failed", e);
     }
 }
+
+document.getElementById('btn-strava-disconnect')?.addEventListener('click', async () => {
+    if (!currentUser) return;
+    if (!confirm("Are you sure you want to disconnect Strava? Your activities will remain, but tokens will be cleared.")) return;
+
+    try {
+        const res = await fetch('/api/strava/disconnect', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_id: currentUser.id })
+        });
+        if (res.ok) {
+            alert("Strava disconnected.");
+            fetchStravaStatus();
+        } else {
+            const err = await res.json();
+            alert("Logout failed: " + (err.detail || "Unknown error"));
+        }
+    } catch (e) {
+        console.error("Disconnect error", e);
+    }
+});
 
 async function handleStravaCallback() {
     const urlParams = new URLSearchParams(window.location.search);

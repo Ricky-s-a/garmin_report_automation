@@ -174,14 +174,16 @@ def fetch_garmin_data(
     gpx_dir = "data/gpx"
     os.makedirs(gpx_dir, exist_ok=True)
     
-    # Read existing records from Supabase (ID + title + notes) to detect updates
-    existing_records = {}  # activityId -> {activityName, description}
+    # Read existing records from Supabase to detect updates and deduplicate against Strava
+    existing_records = {}  # activityId -> {activityName, description, startTimeLocal, source}
     try:
-        response = supabase.table("activities").select("activityId,activityName,description").eq("user_id", user_id).execute()
+        response = supabase.table("activities").select("activityId,activityName,description,startTimeLocal,source").eq("user_id", user_id).execute()
         for row in response.data:
             existing_records[str(row['activityId'])] = {
                 'activityName': row.get('activityName', ''),
                 'description': row.get('description', ''),
+                'startTimeLocal': row.get('startTimeLocal', ''),
+                'source': row.get('source', 'garmin')
             }
     except Exception as e:
         logging.error(f"Failed to fetch existing activity records from Supabase: {e}")
@@ -278,7 +280,32 @@ def fetch_garmin_data(
             
     for activity in running_activities:
         act_id = str(activity.get('activityId'))
+        start_time_local = activity.get('startTimeLocal')
+        
+        # Issue #11: Check for Strava duplicates even if Garmin ID is new
+        strava_duplicate_id = None
+        if start_time_local:
+            st_dt = datetime.fromisoformat(start_time_local.replace(" ", "T"))
+            for eid, rec in existing_records.items():
+                if rec.get('source') == 'strava':
+                    est_dt = datetime.fromisoformat(rec['startTimeLocal'].replace(" ", "T"))
+                    if abs((st_dt - est_dt).total_seconds()) < 300: # 5 min margin
+                        strava_duplicate_id = eid
+                        break
+
         if act_id not in existing_ids:
+            # If we found a Strava duplicate, delete it first to prioritize Garmin
+            if strava_duplicate_id:
+                logging.info(f"Replacing Strava activity {strava_duplicate_id} with Garmin activity {act_id}")
+                try:
+                    supabase.table("activities").delete().eq("activityId", strava_duplicate_id).execute()
+                    # Also delete GPX points for the Strava activity
+                    supabase.table("gpx_points").delete().eq("activityId", strava_duplicate_id).execute()
+                    if strava_duplicate_id in existing_ids:
+                        existing_ids.remove(strava_duplicate_id)
+                except Exception as e:
+                    logging.error(f"Failed to delete Strava duplicate {strava_duplicate_id}: {e}")
+
             # --- 新規アクティビティ: insert + GPXダウンロード ---
             row_data = {}
             for k in keys_to_save:

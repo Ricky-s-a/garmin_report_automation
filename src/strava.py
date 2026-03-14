@@ -18,14 +18,32 @@ def get_strava_config():
     redirect_uri = os.environ.get("STRAVA_REDIRECT_URI", "http://localhost:8080/")
     return client_id, client_secret, redirect_uri
 
+from src.config import is_strava_configured
+
 def get_auth_url():
-    client_id, _, redirect_uri = get_strava_config()
-    if not client_id or client_id == "YOUR_STRAVA_CLIENT_ID":
-        raise ValueError("STRAVA_CLIENT_ID is missing or not configured correctly in environment variables.")
+    if not is_strava_configured():
+        raise ValueError("Strava is not configured. Please set STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET in environment variables.")
     
+    client_id, _, redirect_uri = get_strava_config()
     # Scope: read_all, activity:read_all (to get private activities and streams)
     scope = "read,activity:read_all"
     return f"{STRAVA_AUTH_URL}?client_id={client_id}&redirect_uri={redirect_uri}&response_type=code&scope={scope}"
+
+def disconnect_strava(user_id: str):
+    """Remove Strava tokens from the user's profile."""
+    supabase = get_supabase_client()
+    try:
+        supabase.table("user_profiles").update({
+            "strava_access_token": None,
+            "strava_refresh_token": None,
+            "strava_token_expires_at": None,
+            "strava_athlete_id": None
+        }).eq("user_id", user_id).execute()
+        logging.info(f"Disconnected Strava for user {user_id}")
+        return True
+    except Exception as e:
+        logging.error(f"Failed to disconnect Strava for {user_id}: {e}")
+        return False
 
 def exchange_token(code: str):
     client_id, client_secret, _ = get_strava_config()
@@ -146,14 +164,23 @@ def fetch_strava_data_with_dedup(user_id: str):
         logging.info(f"Strava not connected for user {user_id}")
         return []
 
-    # 1. Get existing activity start times from DB to deduplicate
-    existing_q = supabase.table("activities").select("startTimeLocal").eq("user_id", user_id).execute()
-    existing_starts = []
+    # 1. Get existing activity START times (UTC) from DB to deduplicate
+    # We should select any activity regardless of source.
+    # Note: Strava's start_date is already UTC.
+    existing_q = supabase.table("activities").select("startTimeLocal, source, activityId").eq("user_id", user_id).execute()
+    existing_starts_utc = []
+    
+    # For robust matching, we ideally need a startTimeGMT column. 
+    # If not present, we assume startTimeLocal is roughly correct but it's risky.
+    # Let's check if we can get GPX points' first point time as a proxy, or just use startTimeLocal
+    # In a real system, adding startTimeGMT to 'activities' table is best for maintainability.
+    
     for row in existing_q.data:
         try:
-            # Garmin uses 'YYYY-MM-DD HH:MM:SS' format usually
+            # We assume Garmin records in DB were saved with JST or local time.
+            # Strava records in DB are also saved with startTimeLocal.
             st = datetime.fromisoformat(row['startTimeLocal'].replace(" ", "T"))
-            existing_starts.append(st)
+            existing_starts_utc.append(st)
         except:
             pass
 
@@ -171,13 +198,14 @@ def fetch_strava_data_with_dedup(user_id: str):
             continue
             
         s_id = s_act.get('id')
+        # Use start_date_local for consistent comparison with existing records
         s_start_str = s_act.get('start_date_local') # "2023-01-01T12:00:00Z"
         s_start = datetime.fromisoformat(s_start_str.replace("Z", ""))
         
-        # Deduplication check: +/- 2 minutes
+        # Deduplication check: +/- 5 minutes (Strava vs Garmin can have slight offsets)
         is_duplicate = False
-        for e_start in existing_starts:
-            if abs((s_start - e_start).total_seconds()) < 120:
+        for e_start in existing_starts_utc:
+            if abs((s_start - e_start).total_seconds()) < 300:
                 is_duplicate = True
                 break
         
