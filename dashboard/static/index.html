@@ -68,6 +68,8 @@
                     <div id="sync-status"
                         style="font-size: 0.8rem; color: #64748b; margin-bottom: 10px; display: none;">
                         Syncing...</div>
+                    <button id="btn-sidebar-delete-data" class="btn hidden"
+                        style="width: 100%; margin-bottom: 15px; background: #fff; color: #ef4444; border: 1px solid #fca5a5; padding: 6px; border-radius: 6px; font-size: 0.8rem; cursor: pointer;">🗑️ Delete Synced Data</button>
                     <div class="search-box">
                         <input type="text" id="search-input" placeholder="Search runs or notes...">
                     </div>
@@ -235,6 +237,37 @@
                     <h2>Long-Term Analytics</h2>
                     <p>Track your volume and improvements over time</p>
                 </header>
+
+                <!-- AI Coach Analysis (Long Term) -->
+                <div class="card ai-analysis-card"
+                    style="margin-bottom: 24px; background: #f8fafc; border-left: 4px solid #8b5cf6;">
+                    <div
+                        style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 12px;">
+                        <h3 style="margin: 0;">🧠 Long-Term AI Coach</h3>
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <label for="longterm-model-select"
+                                style="font-size: 0.82rem; color: #64748b; font-weight: 500; white-space: nowrap;">🤖:</label>
+                            <select id="longterm-model-select"
+                                style="padding: 5px 10px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 0.85rem; color: #334155; background: white; cursor: pointer;">
+                                <option value="gemini-2.0-flash">Gemini 2.0 Flash ⚖️</option>
+                                <option value="gemini-2.5-flash">Gemini 2.5 Flash ⚡</option>
+                                <option value="gemini-2.5-pro">Gemini 2.5 Pro 🎯</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div style="margin-bottom: 15px;">
+                        <label for="upcoming-menu" style="font-size: 0.85rem; font-weight: 600; color: #475569; display: block; margin-bottom: 6px;">📋 来週の練習予定・最近のコンディション:</label>
+                        <textarea id="upcoming-menu" rows="3" 
+                            placeholder="例: 火曜日に1km x 5のインターバル、土曜日に20km走を予定。最近少し疲れ気味。..."
+                            style="width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 0.9rem; resize: vertical; font-family: inherit; box-sizing: border-box;"></textarea>
+                    </div>
+
+                    <div id="longterm-ai-analysis-content" style="padding: 5px 0;">
+                        <button id="btn-generate-longterm-ai" class="btn"
+                            style="background: #8b5cf6; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: 600; width: 100%;">中長期トレンドを分析する</button>
+                    </div>
+                </div>
 
                 <!-- Weekly Progress Card -->
                 <div class="card"

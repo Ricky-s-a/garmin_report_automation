@@ -69,6 +69,11 @@ class TrailPresetsRequest(BaseModel):
     user_id: str
     trail_presets: dict
 
+class TrendsAnalysisRequest(BaseModel):
+    user_id: str
+    upcoming_menu: str
+    model: str = "gemini-2.0-flash"
+
 @app.delete("/api/account/{user_id}/data")
 def delete_activity_data(user_id: str):
     try:
@@ -1270,6 +1275,63 @@ def get_activity_analysis(activity_id: str, regenerate: bool = False, model: str
         
         return {"analysis": analysis_text, "model": model}
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+@app.post("/api/trends/analysis")
+def get_trends_analysis(req: TrendsAnalysisRequest):
+    ALLOWED_MODELS = {"gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"}
+    model = req.model if req.model in ALLOWED_MODELS else "gemini-2.0-flash"
+    
+    try:
+        supabase = get_supabase_client()
+        
+        # 1. Fetch Runner Profile
+        profile_resp = supabase.table("user_profiles").select("runner_profile").eq("user_id", req.user_id).execute()
+        runner_profile = profile_resp.data[0].get("runner_profile", "") if profile_resp.data else ""
+        
+        # 2. Fetch Rolling Stats
+        rs_resp = supabase.table("activity_rolling_stats").select("*").eq("user_id", req.user_id).execute()
+        rolling_context = ""
+        if rs_resp.data:
+            rolling_context = _format_rolling_stats_for_prompt(rs_resp.data[0])
+        
+        # 4. Read Long Term System Prompt
+        base_dir = os.path.dirname(os.path.dirname(__file__))
+        system_prompt_path = os.path.join(base_dir, "prompts", "long_term_prompt.txt")
+        try:
+            with open(system_prompt_path, "r", encoding="utf-8") as f:
+                system_instruction = f.read().strip()
+        except Exception:
+            system_instruction = "You are a running coach analyzing long-term trends."
+            
+        # 5. Construct User Prompt
+        user_content = f"""【現在のユーザープロファイル・目標】
+{runner_profile if runner_profile else "記載なし"}
+
+{rolling_context if rolling_context else "過去の統計データがまだ十分ではありません。"}
+
+【来週の予定練習メニュー】
+{req.upcoming_menu if req.upcoming_menu else "未入力"}
+
+上記の情報に基づき、中長期的な分析とアドバイスをお願いします。"""
+
+        # 6. Call Gemini
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            raise HTTPException(status_code=500, detail="GEMINI_API_KEY not set")
+            
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(
+            model=model,
+            contents=user_content,
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction,
+            ),
+        )
+        
+        return {"analysis": response.text, "model": model}
+        
+    except Exception as e:
+        logging.error(f"Trends analysis error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":

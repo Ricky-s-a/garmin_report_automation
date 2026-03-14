@@ -65,6 +65,9 @@ function handleAuthStateChange(session) {
             loggedInSection.classList.remove('hidden');
             loggedInSection.style.display = 'block'; // Force display style
         }
+        
+        const btnSidebarDeleteData = document.getElementById('btn-sidebar-delete-data');
+        if (btnSidebarDeleteData) btnSidebarDeleteData.classList.remove('hidden');
 
         const metadata = currentUser.user_metadata || {};
         const nameEl = document.getElementById('user-display-name');
@@ -85,6 +88,9 @@ function handleAuthStateChange(session) {
     } else {
         if (loggedOutSection) loggedOutSection.classList.remove('hidden');
         if (loggedInSection) loggedInSection.classList.add('hidden');
+        
+        const btnSidebarDeleteData = document.getElementById('btn-sidebar-delete-data');
+        if (btnSidebarDeleteData) btnSidebarDeleteData.classList.add('hidden');
 
         const nameEl = document.getElementById('user-display-name');
         const emailEl = document.getElementById('user-display-email');
@@ -363,6 +369,36 @@ function setupNavigation() {
         });
     }
 
+    const btnSidebarDeleteData = document.getElementById('btn-sidebar-delete-data');
+    if (btnSidebarDeleteData) {
+        btnSidebarDeleteData.addEventListener('click', async () => {
+            const confirmDelete = confirm("⚠️ 警告: アクティビティデータのみが削除されます。再度同期すれば復元可能です。\n削除を実行しますか？");
+            if (!confirmDelete) return;
+
+            btnSidebarDeleteData.disabled = true;
+            btnSidebarDeleteData.textContent = "🗑️ Deleting...";
+            
+            try {
+                const res = await fetch(`/api/account/${currentUser.id}/data`, {
+                    method: 'DELETE'
+                });
+                if (res.ok) {
+                    alert("アクティビティデータが正常に削除されました。");
+                    window.location.reload();
+                } else {
+                    const data = await res.json();
+                    alert("Error: " + (data.detail || "Failed to delete data."));
+                    btnSidebarDeleteData.disabled = false;
+                    btnSidebarDeleteData.textContent = "🗑️ Delete Synced Data";
+                }
+            } catch (e) {
+                alert("Error deleting data: " + e.message);
+                btnSidebarDeleteData.disabled = false;
+                btnSidebarDeleteData.textContent = "🗑️ Delete Synced Data";
+            }
+        });
+    }
+
     const btnDeleteAccount = document.getElementById('btn-delete-account');
     if (btnDeleteAccount) {
         btnDeleteAccount.addEventListener('click', async () => {
@@ -455,6 +491,11 @@ function setupNavigation() {
             }
         });
     }
+
+    const btnGenLongTermAI = document.getElementById('btn-generate-longterm-ai');
+    if (btnGenLongTermAI) {
+        btnGenLongTermAI.addEventListener('click', generateLongTermAIAnalysis);
+    }
 }
 
 // Utility to format seconds into MM:SS
@@ -523,9 +564,16 @@ function renderSidebar(activities) {
             const truncated = act.description.length > 50 ? act.description.substring(0, 50) + '...' : act.description;
             descHtml = `<div style="font-size: 0.75rem; color: #94a3b8; margin-top: 6px; font-style: italic; white-space: normal; line-height: 1.3;">${truncated}</div>`;
         }
+        
+        let sourceBadge = '';
+        if (act.source === 'strava') {
+            sourceBadge = `<span style="font-size:0.65rem; background:#fc4c02; color:white; padding:2px 4px; border-radius:4px; margin-left:6px; vertical-align:middle;">Strava</span>`;
+        } else {
+            sourceBadge = `<span style="font-size:0.65rem; background:#10b981; color:white; padding:2px 4px; border-radius:4px; margin-left:6px; vertical-align:middle;">Garmin</span>`;
+        }
 
         item.innerHTML = `
-            <div class="activity-title">${act.activityName || 'Running'}</div>
+            <div class="activity-title" style="display:flex; align-items:center;">${act.activityName || 'Running'}${sourceBadge}</div>
             <div class="activity-meta">
                 <span>${dateStr}</span>
                 <span>${distKm} km</span>
@@ -2631,4 +2679,99 @@ async function handleStravaCallback() {
             }
         }, 500);
     }
+}
+
+async function generateLongTermAIAnalysis() {
+    if (!currentUser) {
+        alert("Please login first.");
+        return;
+    }
+
+    const btn = document.getElementById('btn-generate-longterm-ai');
+    const display = document.getElementById('longterm-ai-analysis-content');
+    const menuEl = document.getElementById('upcoming-menu');
+    const menuText = menuEl ? menuEl.value : "";
+    const selectedModel = document.getElementById('longterm-model-select').value;
+
+    if (!menuText || menuText.trim() === '') {
+        const confirmEmpty = confirm("来週のメニューが入力されていません。現状のトレーニングボリュームの分析のみ行いますか？");
+        if (!confirmEmpty) return;
+    }
+
+    btn.disabled = true;
+    const originalContent = display.innerHTML;
+    
+    display.innerHTML = `
+        <div class="ai-loader-container" style="padding: 20px;">
+            <div class="ai-spinner" style="margin: 0 auto 15px;"></div>
+            <div style="text-align: center; color: #64748b; font-size: 0.9rem;">
+                トレンドと予定メニューを分析中... <span id="longterm-ai-timer">0</span>s
+            </div>
+        </div>
+    `;
+
+    let secs = 0;
+    const timerId = setInterval(() => {
+        secs++;
+        const timerEl = document.getElementById('longterm-ai-timer');
+        if (timerEl) timerEl.textContent = secs;
+    }, 1000);
+
+    try {
+        const res = await fetch('/api/trends/analysis', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                user_id: currentUser.id,
+                upcoming_menu: menuText,
+                model: selectedModel
+            })
+        });
+        
+        const data = await res.json();
+        clearInterval(timerId);
+
+        if (res.ok && data.analysis) {
+            const renderMarkdown = (text) => {
+                let html = text;
+                html = html.replace(/\n\n/g, '<br><br>');
+                html = html.replace(/\n/g, '<br/>');
+                html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+                html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
+                html = html.replace(/#(.*?)(<br\/>|$)/g, '<h4><strong>$1</strong></h4>');
+                html = html.replace(/^- (.*?)(<br\/>|$)/gm, '• $1$2');
+                return html;
+            };
+            
+            display.innerHTML = `
+                <div style="background: white; border-radius: 8px; border: 1px solid #e2e8f0; padding: 20px; line-height: 1.6; font-size: 0.95rem; color: #1e293b; max-height: 600px; overflow-y: auto; margin-top: 10px;">
+                    ${renderMarkdown(data.analysis)}
+                </div>
+                <button id="btn-reset-longterm-ai" class="btn" style="background:#94a3b8; margin-top:15px; width:100%;">新しく分析する</button>
+            `;
+            document.getElementById('btn-reset-longterm-ai').addEventListener('click', resetLongTermAI);
+        } else {
+            display.innerHTML = `<p style="color:red; padding:10px;">Error: ${data.detail || 'Failed to generate analysis'}</p>` + originalContent;
+            if (document.getElementById('btn-generate-longterm-ai')) {
+                document.getElementById('btn-generate-longterm-ai').addEventListener('click', generateLongTermAIAnalysis);
+            }
+            btn.disabled = false;
+        }
+    } catch (e) {
+        clearInterval(timerId);
+        display.innerHTML = `<p style="color:red; padding:10px;">Error: ${e.message}</p>` + originalContent;
+        if (document.getElementById('btn-generate-longterm-ai')) {
+            document.getElementById('btn-generate-longterm-ai').addEventListener('click', generateLongTermAIAnalysis);
+        }
+        btn.disabled = false;
+    }
+}
+
+function resetLongTermAI() {
+    const display = document.getElementById('longterm-ai-analysis-content');
+    display.innerHTML = `
+        <button id="btn-generate-longterm-ai" class="btn"
+            style="background: #8b5cf6; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: 600; width: 100%;">中長期トレンドを分析する</button>
+    `;
+    document.getElementById('btn-generate-longterm-ai').addEventListener('click', generateLongTermAIAnalysis);
 }
