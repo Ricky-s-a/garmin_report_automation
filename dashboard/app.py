@@ -7,7 +7,7 @@ import pandas as pd
 from math import radians, sin, cos, sqrt, atan2
 from datetime import datetime, timedelta
 from collections import defaultdict
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
@@ -73,6 +73,10 @@ class TrendsAnalysisRequest(BaseModel):
     user_id: str
     upcoming_menu: str
     model: str = "gemini-2.0-flash"
+
+class MenuRequest(BaseModel):
+    user_id: str
+    upcoming_menu: str
 
 @app.delete("/api/account/{user_id}/data")
 def delete_activity_data(user_id: str):
@@ -150,12 +154,16 @@ def save_credentials(req: CredentialRequest):
 def get_credentials(user_id: str):
     try:
         supabase = get_supabase_client()
-        existing = supabase.table("user_profiles").select("garmin_email,runner_profile,max_hr").eq("user_id", user_id).execute()
+        existing = supabase.table("user_profiles").select("garmin_email,runner_profile,max_hr,last_upcoming_menu,last_longterm_analysis,last_longterm_model").eq("user_id", user_id).execute()
         if existing.data and len(existing.data) > 0:
+            row = existing.data[0]
             return {
-                "garmin_email": existing.data[0].get("garmin_email", ""),
-                "runner_profile": existing.data[0].get("runner_profile", ""),
-                "max_hr": existing.data[0].get("max_hr")
+                "garmin_email": row.get("garmin_email", ""),
+                "runner_profile": row.get("runner_profile", ""),
+                "max_hr": row.get("max_hr"),
+                "last_upcoming_menu": row.get("last_upcoming_menu", ""),
+                "last_longterm_analysis": row.get("last_longterm_analysis", ""),
+                "last_longterm_model": row.get("last_longterm_model", "")
             }
         return {"garmin_email": "", "runner_profile": "", "max_hr": None}
     except Exception as e:
@@ -259,7 +267,7 @@ def sync_data(req: SyncRequest):
     return sync_all_data(req)
 
 @app.post("/api/sync/all")
-def sync_all_data(req: SyncRequest):
+def sync_all_data(req: SyncRequest, background_tasks: BackgroundTasks):
     """Unified sync for Garmin and Strava."""
     results = {"garmin": "skipped", "strava": "skipped"}
     
@@ -311,6 +319,13 @@ def sync_all_data(req: SyncRequest):
         _compute_and_save_rolling_stats(supabase_client, req.user_id)
     except Exception as stats_err:
         logging.warning(f"Rolling stats computation failed: {stats_err}")
+
+    # NEW: Trigger auto-generation of reports for last 5 activities in background
+    if background_tasks:
+        background_tasks.add_task(_auto_generate_recent_reports, req.user_id)
+    else:
+        # Fallback if somehow not provided (though FastAPI should provide it)
+        pass
 
     return {"status": "success", "results": results}
 
@@ -953,8 +968,7 @@ def get_activity_gpx(activity_id: str):
         
     return df_filtered.to_dict(orient="records")
 
-@app.get("/api/activities/{activity_id}/analysis")
-def get_activity_analysis(activity_id: str, regenerate: bool = False, model: str = "gemini-2.5-flash", report_type: str = "long"):
+def _generate_single_activity_analysis(activity_id: str, report_type: str = "long", model: str = "gemini-2.5-flash", regenerate: bool = False):
     # Allowlist to prevent arbitrary model injection
     ALLOWED_MODELS = {"gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"}
     if model not in ALLOWED_MODELS:
@@ -963,10 +977,10 @@ def get_activity_analysis(activity_id: str, regenerate: bool = False, model: str
         supabase = get_supabase_client()
         response = supabase.table("activities").select("*").eq("activityId", activity_id).execute()
     except Exception as e:
-        raise HTTPException(status_code=500, detail="Database connection error")
+        raise Exception(f"Database connection error: {e}")
         
     if not response.data:
-        raise HTTPException(status_code=404, detail="Activity not found")
+        raise Exception("Activity not found")
         
     activity = response.data[0]
     
@@ -974,7 +988,7 @@ def get_activity_analysis(activity_id: str, regenerate: bool = False, model: str
     cache_field = "aiAnalysisShort" if report_type == "short" else "aiAnalysis"
     cached = activity.get(cache_field)
     if cached and not regenerate:
-        return {"analysis": cached, "cached": True}
+        return {"analysis": cached, "cached": True, "model": model}
     
     # Read system prompt
     base_dir = os.path.dirname(os.path.dirname(__file__))
@@ -1249,7 +1263,7 @@ def get_activity_analysis(activity_id: str, regenerate: bool = False, model: str
 
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        raise HTTPException(status_code=500, detail="GEMINI_API_KEY not set")
+        raise Exception("GEMINI_API_KEY not set")
         
     client = genai.Client(api_key=api_key)
     try:
@@ -1274,6 +1288,46 @@ def get_activity_analysis(activity_id: str, regenerate: bool = False, model: str
             print(f"Warning: failed to cache AI analysis to Supabase: {save_err}")
         
         return {"analysis": analysis_text, "model": model}
+    except Exception as e:
+        raise Exception(f"Gemini API error: {e}")
+
+def _auto_generate_recent_reports(user_id: str, count: int = 5):
+    """Automatically generate short and long reports for the last N activities if missing."""
+    try:
+        supabase = get_supabase_client()
+        # Fetch last N activities
+        resp = supabase.table("activities").select("activityId,aiAnalysis,aiAnalysisShort").eq("user_id", user_id).order("startTimeLocal", desc=True).limit(count).execute()
+        
+        if not resp.data:
+            return
+            
+        for act in resp.data:
+            act_id = str(act["activityId"])
+            
+            # 1. Long report if missing
+            if not act.get("aiAnalysis"):
+                try:
+                    logging.info(f"Auto-generating long report for activity {act_id}")
+                    _generate_single_activity_analysis(act_id, report_type="long")
+                except Exception as e:
+                    logging.error(f"Failed to auto-generate long report for {act_id}: {e}")
+            
+            # 2. Short report if missing
+            if not act.get("aiAnalysisShort"):
+                try:
+                    logging.info(f"Auto-generating short report for activity {act_id}")
+                    _generate_single_activity_analysis(act_id, report_type="short")
+                except Exception as e:
+                    logging.error(f"Failed to auto-generate short report for {act_id}: {e}")
+                    
+    except Exception as e:
+        logging.error(f"Error in _auto_generate_recent_reports: {e}")
+
+@app.get("/api/activities/{activity_id}/analysis")
+def get_activity_analysis(activity_id: str, regenerate: bool = False, model: str = "gemini-2.5-flash", report_type: str = "long"):
+    try:
+        res = _generate_single_activity_analysis(activity_id, report_type, model, regenerate)
+        return res
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 @app.post("/api/trends/analysis")
@@ -1328,10 +1382,34 @@ def get_trends_analysis(req: TrendsAnalysisRequest):
             ),
         )
         
-        return {"analysis": response.text, "model": model}
+        analysis_text = response.text
+        
+        # 7. Persist to User Profile
+        try:
+            supabase.table("user_profiles").update({
+                "last_upcoming_menu": req.upcoming_menu,
+                "last_longterm_analysis": analysis_text,
+                "last_longterm_model": model
+            }).eq("user_id", req.user_id).execute()
+        except Exception as save_err:
+            logging.warning(f"Failed to save long-term analysis to profile: {save_err}")
+            
+        return {"analysis": analysis_text, "model": model}
         
     except Exception as e:
         logging.error(f"Trends analysis error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/trends/menu")
+def save_upcoming_menu(req: MenuRequest):
+    try:
+        supabase = get_supabase_client()
+        supabase.table("user_profiles").update({
+            "last_upcoming_menu": req.upcoming_menu
+        }).eq("user_id", req.user_id).execute()
+        return {"status": "success"}
+    except Exception as e:
+        logging.error(f"Menu save error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":

@@ -26,6 +26,7 @@ let trendMonthlyDistChart;
 let trendAtlCtlChart;
 let trendZone2Chart;
 let hrZoneChart;
+let lastLongTermData = null;
 // ... other charts ...
 let userMaxHr = null;
 let userRestingHr = parseInt(localStorage.getItem('garmin_resting_hr') || '55') || 55;
@@ -144,6 +145,7 @@ function setupNavigation() {
         document.getElementById('dashboard-view').classList.add('hidden');
         document.getElementById('trail-view').classList.add('hidden');
         document.getElementById('trends-view').classList.remove('hidden');
+        populateLongTermFields();
         renderTrends('weekly');
     });
 
@@ -496,6 +498,29 @@ function setupNavigation() {
     if (btnGenLongTermAI) {
         btnGenLongTermAI.addEventListener('click', generateLongTermAIAnalysis);
     }
+
+    const menuEl = document.getElementById('upcoming-menu');
+    if (menuEl) {
+        let saveTimeout;
+        menuEl.addEventListener('input', () => {
+            clearTimeout(saveTimeout);
+            saveTimeout = setTimeout(async () => {
+                if (!currentUser) return;
+                try {
+                    fetch('/api/trends/menu', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            user_id: currentUser.id,
+                            upcoming_menu: menuEl.value
+                        })
+                    });
+                } catch (e) {
+                    console.error("Failed to save menu automatically", e);
+                }
+            }, 2000);
+        });
+    }
 }
 
 // Utility to format seconds into MM:SS
@@ -524,6 +549,16 @@ async function fetchUserSettings() {
             const data = await res.json();
             userMaxHr = data.max_hr || null;
             userRestingHr = data.resting_hr || parseInt(localStorage.getItem('garmin_resting_hr') || '55') || 55;
+            
+            lastLongTermData = {
+                menu: data.last_upcoming_menu || "",
+                analysis: data.last_longterm_analysis || "",
+                model: data.last_longterm_model || ""
+            };
+            
+            if (document.getElementById('trends-view') && !document.getElementById('trends-view').classList.contains('hidden')) {
+                populateLongTermFields();
+            }
         }
     } catch (e) { console.error(e); }
 }
@@ -2732,24 +2767,12 @@ async function generateLongTermAIAnalysis() {
         clearInterval(timerId);
 
         if (res.ok && data.analysis) {
-            const renderMarkdown = (text) => {
-                let html = text;
-                html = html.replace(/\n\n/g, '<br><br>');
-                html = html.replace(/\n/g, '<br/>');
-                html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-                html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
-                html = html.replace(/#(.*?)(<br\/>|$)/g, '<h4><strong>$1</strong></h4>');
-                html = html.replace(/^- (.*?)(<br\/>|$)/gm, '• $1$2');
-                return html;
+            lastLongTermData = {
+                menu: menuText,
+                analysis: data.analysis,
+                model: selectedModel
             };
-            
-            display.innerHTML = `
-                <div style="background: white; border-radius: 8px; border: 1px solid #e2e8f0; padding: 20px; line-height: 1.6; font-size: 0.95rem; color: #1e293b; max-height: 600px; overflow-y: auto; margin-top: 10px;">
-                    ${renderMarkdown(data.analysis)}
-                </div>
-                <button id="btn-reset-longterm-ai" class="btn" style="background:#94a3b8; margin-top:15px; width:100%;">新しく分析する</button>
-            `;
-            document.getElementById('btn-reset-longterm-ai').addEventListener('click', resetLongTermAI);
+            renderStoredLongTermAnalysis(data.analysis);
         } else {
             display.innerHTML = `<p style="color:red; padding:10px;">Error: ${data.detail || 'Failed to generate analysis'}</p>` + originalContent;
             if (document.getElementById('btn-generate-longterm-ai')) {
@@ -2773,5 +2796,44 @@ function resetLongTermAI() {
         <button id="btn-generate-longterm-ai" class="btn"
             style="background: #8b5cf6; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: 600; width: 100%;">中長期トレンドを分析する</button>
     `;
+    if (lastLongTermData) lastLongTermData.analysis = ""; // Clear stored analysis on reset
     document.getElementById('btn-generate-longterm-ai').addEventListener('click', generateLongTermAIAnalysis);
+}
+
+function renderStoredLongTermAnalysis(text) {
+    const display = document.getElementById('longterm-ai-analysis-content');
+    if (!display) return;
+    
+    const renderMarkdown = (text) => {
+        let html = text;
+        html = html.replace(/\n\n/g, '<br><br>');
+        html = html.replace(/\n/g, '<br/>');
+        html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+        html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
+        html = html.replace(/#(.*?)(<br\/>|$)/g, '<h4><strong>$1</strong></h4>');
+        html = html.replace(/^- (.*?)(<br\/>|$)/gm, '• $1$2');
+        return html;
+    };
+    
+    display.innerHTML = `
+        <div style="background: white; border-radius: 8px; border: 1px solid #e2e8f0; padding: 20px; line-height: 1.6; font-size: 0.95rem; color: #1e293b; max-height: 600px; overflow-y: auto; margin-top: 10px;">
+            ${renderMarkdown(text)}
+        </div>
+        <button id="btn-reset-longterm-ai" class="btn" style="background:#94a3b8; margin-top:15px; width:100%;">新しく分析する</button>
+    `;
+    document.getElementById('btn-reset-longterm-ai').addEventListener('click', resetLongTermAI);
+}
+
+function populateLongTermFields() {
+    if (!lastLongTermData) return;
+    const menuEl = document.getElementById('upcoming-menu');
+    const modelEl = document.getElementById('longterm-model-select');
+    const display = document.getElementById('longterm-ai-analysis-content');
+    
+    if (menuEl && lastLongTermData.menu) menuEl.value = lastLongTermData.menu;
+    if (modelEl && lastLongTermData.model) modelEl.value = lastLongTermData.model;
+    
+    if (display && lastLongTermData.analysis && display.querySelector('#btn-generate-longterm-ai')) {
+        renderStoredLongTermAnalysis(lastLongTermData.analysis);
+    }
 }
