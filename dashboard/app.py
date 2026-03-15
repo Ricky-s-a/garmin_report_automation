@@ -958,7 +958,7 @@ def _get_recent_activities_context(supabase, user_id: str, count: int = 10) -> s
         if not resp.data:
             return ""
         
-        lines = ["【最近の個別アクティビティ履歴 (直近10件)】"]
+        lines = [f"【最近の個別アクティビティ履歴 (直近{len(resp.data)}件)】"]
         lines.append(f"{'日付':<12} {'名称':<25} {'距離':>6} {'ペース':>7} {'心拍':>5} {'TE':>4}")
         lines.append("-" * 75)
         
@@ -979,7 +979,7 @@ def _get_recent_activities_context(supabase, user_id: str, count: int = 10) -> s
             
             # Add description if exists (briefly)
             desc = a.get("description")
-            desc_str = f" (備考: {desc.strip()[:30]}...)" if desc and desc.strip() else ""
+            desc_str = f" (備考: {desc.strip()[:35]}...)" if desc and desc.strip() else ""
             
             lines.append(f"{dt:<12} {name:<25} {dist_km:>5.1f}k {pace:>7} {hr:>5} {te:>4}{desc_str}")
             
@@ -988,10 +988,11 @@ def _get_recent_activities_context(supabase, user_id: str, count: int = 10) -> s
         logging.warning(f"Error fetching recent activities context: {e}")
         return ""
 
-def _get_pace_zone_context(supabase, user_id: str) -> str:
+
+def _get_pace_zone_context(supabase, user_id: str, limit: int = 15) -> str:
     try:
-        # Get last 3 months of monthly stats (5 zones * 3 months)
-        resp = supabase.table("pace_zone_stats").select("*").eq("user_id", user_id).eq("period_type", "monthly").order("period_key", desc=True).limit(15).execute()
+        # monthly stats (5 zones * N months)
+        resp = supabase.table("pace_zone_stats").select("*").eq("user_id", user_id).eq("period_type", "monthly").order("period_key", desc=True).limit(limit).execute()
         if not resp.data:
             return ""
         
@@ -1014,7 +1015,37 @@ def _get_pace_zone_context(supabase, user_id: str) -> str:
         logging.warning(f"Error fetching pace zone context: {e}")
         return ""
 
-def _build_longterm_user_content(supabase, req, profile_data, rolling_stats_row):
+def _get_weekly_training_summary(supabase, user_id: str, limit_weeks: int = 8) -> str:
+    try:
+        # Get weekly pace zone stats (5 zones * N weeks)
+        resp = supabase.table("pace_zone_stats").select("*").eq("user_id", user_id).eq("period_type", "weekly").order("period_key", desc=True).limit(limit_weeks * 5).execute()
+        if not resp.data:
+            return ""
+        
+        # Group by week
+        by_week = defaultdict(list)
+        for r in resp.data:
+            by_week[r["period_key"]].append(r)
+            
+        lines = ["【週次トレーニングボリューム推移 (最近8週間)】"]
+        for week_start in sorted(by_week.keys(), reverse=True):
+            total_mins = sum(r.get("time_mins", 0) for r in by_week[week_start])
+            if total_mins < 1: continue
+            
+            lines.append(f"■ 週開始日: {week_start} (合計 {total_mins:.0f} 分)")
+            for r in sorted(by_week[week_start], key=lambda x: x["zone_name"]):
+                m = r.get("time_mins", 0)
+                if m > 0:
+                    perc = (m / total_mins * 100) if total_mins > 0 else 0
+                    lines.append(f"  - {r['zone_name']:<10}: {m:>5.1f} 分 ({perc:>3.0f}%)")
+        
+        return "\n".join(lines)
+    except Exception as e:
+        logging.warning(f"Error fetching weekly summary: {e}")
+        return ""
+
+
+def _build_longterm_user_content(supabase, req, profile_data, rolling_stats_row, enriched: bool = False):
     runner_profile = profile_data.get("runner_profile", "") if profile_data else ""
     max_hr = profile_data.get("max_hr") if profile_data else None
     
@@ -1022,8 +1053,14 @@ def _build_longterm_user_content(supabase, req, profile_data, rolling_stats_row)
     if rolling_stats_row:
         rolling_context = _format_rolling_stats_for_prompt(rolling_stats_row)
     
-    recent_activities = _get_recent_activities_context(supabase, req.user_id)
-    pace_zones = _get_pace_zone_context(supabase, req.user_id)
+    # Context Volume Adjustment
+    act_count = 30 if enriched else 10
+    pz_limit = 30 if enriched else 15 # 6 months vs 3 months
+    
+    recent_activities = _get_recent_activities_context(supabase, req.user_id, count=act_count)
+    pace_zones = _get_pace_zone_context(supabase, req.user_id, limit=pz_limit)
+    weekly_summary = _get_weekly_training_summary(supabase, req.user_id, limit_weeks=8 if enriched else 4)
+
     
     # Latest VO2Max
     vo2_max_str = ""
@@ -1054,7 +1091,10 @@ def _build_longterm_user_content(supabase, req, profile_data, rolling_stats_row)
 
 {pace_zones if pace_zones else ""}
 
+{weekly_summary if weekly_summary else ""}
+
 {recent_activities if recent_activities else ""}
+
 
 【来週の予定練習メニュー】
 {req.upcoming_menu if req.upcoming_menu else "未入力"}
@@ -1569,7 +1609,8 @@ def get_trends_prompt_preview(req: TrendsAnalysisRequest):
                 system_instruction = f.read().strip()
         except Exception:
             system_instruction = "You are a running coach analyzing long-term trends."
-        user_content = _build_longterm_user_content(supabase, req, profile_data, rs_resp.data[0] if rs_resp.data else None)
+        # 5. Construct User Prompt (Enriched for download)
+        user_content = _build_longterm_user_content(supabase, req, profile_data, rs_resp.data[0] if rs_resp.data else None, enriched=True)
         full_prompt = f"# SYSTEM PROMPT\n{system_instruction}\n\n# USER PROMPT\n{user_content}"
         return {"prompt": full_prompt}
     except Exception as e:
