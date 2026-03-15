@@ -2338,6 +2338,14 @@ function drawTrailChart(targetX, predPaceSec, targetDist, raceName) {
         { x: maxX, y: trailRegressionModel.a * maxX + trailRegressionModel.b }
     ];
 
+    const n = trailDataPoints.length;
+    const backgroundColors = trailDataPoints.map((p, i) => {
+        // globalActivities is newest-first, so i=0 is newest.
+        // Opacity: newest (i=0) -> 1.0, oldest (i=n-1) -> 0.15
+        const opacity = n > 1 ? 0.15 + 0.85 * (1 - i / (n - 1)) : 1.0;
+        return `rgba(2, 132, 199, ${opacity})`;
+    });
+
     const scatterData = trailDataPoints.map(p => ({ x: p.x, y: p.y, name: p.name, dist: p.dist }));
 
     // Format Y axis (sec to HH:MM:SS for tooltip and labels)
@@ -2360,7 +2368,7 @@ function drawTrailChart(targetX, predPaceSec, targetDist, raceName) {
                 {
                     label: '過去のトレラン実測値',
                     data: scatterData,
-                    backgroundColor: '#0284c7',
+                    backgroundColor: backgroundColors,
                     pointRadius: 6,
                     pointHoverRadius: 8
                 },
