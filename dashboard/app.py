@@ -1494,6 +1494,7 @@ def _generate_single_activity_analysis(activity_id: str, report_type: str = "lon
     
     # Retry logic for 429
     max_retries = 3
+    analysis_text = None
     for attempt in range(max_retries):
         try:
             response = client.models.generate_content(
@@ -1507,24 +1508,29 @@ def _generate_single_activity_analysis(activity_id: str, report_type: str = "lon
             break
         except Exception as e:
             if "exhausted" in str(e).lower() or "429" in str(e) or attempt < max_retries - 1:
+                if attempt == max_retries - 1:
+                    raise Exception(f"Gemini API token limits or 429 exhausted after {max_retries} attempts: {e}")
                 wait_sec = (attempt + 1) * 2
                 logging.warning(f"Gemini API limit hit. Retrying in {wait_sec}s... ({e})")
                 time_mod.sleep(wait_sec)
                 continue
             raise Exception(f"Gemini API error after {max_retries} attempts: {e}")
+            
+    if not analysis_text:
+        raise Exception("Failed to generate content: response was empty or retries failed.")
         
-        # Save the result back to Supabase for future use
-        try:
-            update_data = {}
-            if report_type == "short":
-                update_data["aiAnalysisShort"] = analysis_text
-            else:
-                update_data["aiAnalysis"] = analysis_text
-            supabase.table("activities").update(update_data).eq("activityId", activity_id).execute()
-        except Exception as save_err:
-            print(f"Warning: failed to cache AI analysis to Supabase: {save_err}")
-        
-        return {"analysis": analysis_text, "model": model}
+    # Save the result back to Supabase for future use
+    try:
+        update_data = {}
+        if report_type == "short":
+            update_data["aiAnalysisShort"] = analysis_text
+        else:
+            update_data["aiAnalysis"] = analysis_text
+        supabase.table("activities").update(update_data).eq("activityId", activity_id).execute()
+    except Exception as save_err:
+        print(f"Warning: failed to cache AI analysis to Supabase: {save_err}")
+    
+    return {"analysis": analysis_text, "model": model}
 
 import concurrent.futures
 
@@ -1555,8 +1561,8 @@ def _auto_generate_recent_reports(user_id: str, count: int = 2):
 
         logging.info(f"Auto-generating {len(tasks)} reports in parallel for user {user_id}...")
         
-        # Parallelize Gemini calls
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        # Parallelize Gemini calls but limit concurrency to prevent rate limiting (429) errors
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
             fut_to_task = {
                 executor.submit(_generate_single_activity_analysis, t[0], report_type=t[1]): t 
                 for t in tasks

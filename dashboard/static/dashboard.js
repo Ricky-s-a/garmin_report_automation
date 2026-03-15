@@ -347,7 +347,7 @@ function setupNavigation() {
         }
     });
 
-    function populateModalFields(data) {
+    window.populateModalFields = function(data) {
         console.log("Populating modal with:", data);
         const emailInput = document.getElementById('settings-garmin-email');
         const pwInput = document.getElementById('settings-garmin-password');
@@ -366,7 +366,7 @@ function setupNavigation() {
         if (tokensInput) {
             tokensInput.value = data.garmin_session_tokens ? JSON.stringify(data.garmin_session_tokens, null, 2) : '';
         }
-    }
+    };
 
     const btnDeleteData = document.getElementById('btn-delete-data');
     if (btnDeleteData) {
