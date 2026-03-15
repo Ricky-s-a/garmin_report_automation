@@ -72,7 +72,7 @@ class TrailPresetsRequest(BaseModel):
 class TrendsAnalysisRequest(BaseModel):
     user_id: str
     upcoming_menu: str
-    model: str = "gemini-2.0-flash"
+    model: str = "gemini-1.5-flash"
     current_atl: Optional[float] = None
     current_ctl: Optional[float] = None
     current_tsb: Optional[float] = None
@@ -1454,6 +1454,48 @@ def get_trends_analysis(req: TrendsAnalysisRequest):
         
     except Exception as e:
         logging.error(f"Trends analysis error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+@app.post("/api/trends/prompt")
+def get_trends_prompt_preview(req: TrendsAnalysisRequest):
+    try:
+        supabase = get_supabase_client()
+        # 1. Fetch Runner Profile
+        profile_resp = supabase.table("user_profiles").select("runner_profile").eq("user_id", req.user_id).execute()
+        runner_profile = profile_resp.data[0].get("runner_profile", "") if profile_resp.data else ""
+        # 2. Fetch Rolling Stats
+        rs_resp = supabase.table("activity_rolling_stats").select("*").eq("user_id", req.user_id).execute()
+        rolling_context = ""
+        if rs_resp.data:
+            rolling_context = _format_rolling_stats_for_prompt(rs_resp.data[0])
+        # 4. Read Long Term System Prompt
+        base_dir = os.path.dirname(os.path.dirname(__file__))
+        system_prompt_path = os.path.join(base_dir, "prompts", "long_term_prompt.txt")
+        try:
+            with open(system_prompt_path, "r", encoding="utf-8") as f:
+                system_instruction = f.read().strip()
+        except Exception:
+            system_instruction = "You are a running coach analyzing long-term trends."
+        metrics_context = ""
+        if req.current_atl is not None or req.current_ctl is not None or req.current_tsb is not None:
+            metrics_context = f"""【現在のトレーニング指標】
+- ATL (疲労/短期負荷): {req.current_atl if req.current_atl is not None else "--"}
+- CTL (体力/長期負荷): {req.current_ctl if req.current_ctl is not None else "--"}
+- TSB (フォーム/バランス): {req.current_tsb if req.current_tsb is not None else "--"}
+"""
+        user_content = f"""{metrics_context}
+【現在のユーザープロファイル・目標】
+{runner_profile if runner_profile else "記載なし"}
+
+{rolling_context if rolling_context else "過去の統計データがまだ十分ではありません。"}
+
+【来週の予定練習メニュー】
+{req.upcoming_menu if req.upcoming_menu else "未入力"}
+
+上記の情報に基づき、中長期的な分析とアドバイスをお願いします。"""
+        full_prompt = f"# SYSTEM PROMPT\n{system_instruction}\n\n# USER PROMPT\n{user_content}"
+        return {"prompt": full_prompt}
+    except Exception as e:
+        logging.error(f"Prompt preview error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/trends/menu")

@@ -249,9 +249,9 @@
                                 style="font-size: 0.82rem; color: #64748b; font-weight: 500; white-space: nowrap;">🤖:</label>
                             <select id="longterm-model-select"
                                 style="padding: 5px 10px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 0.85rem; color: #334155; background: white; cursor: pointer;">
-                                <option value="gemini-1.5-flash">Gemini 1.5 Flash ⚡</option>
+                                <option value="gemini-1.5-flash" selected>Gemini 1.5 Flash ⚡</option>
                                 <option value="gemini-1.5-pro">Gemini 1.5 Pro 🎯</option>
-                                <option value="gemini-2.0-flash" selected>Gemini 2.0 Flash ⚖️</option>
+                                <option value="gemini-2.0-flash">Gemini 2.0 Flash ⚖️</option>
                             </select>
                         </div>
                     </div>
@@ -264,8 +264,13 @@
                     </div>
 
                     <div id="longterm-ai-analysis-content" style="padding: 5px 0;">
-                        <button id="btn-generate-longterm-ai" class="btn"
-                            style="background: #8b5cf6; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: 600; width: 100%;">中長期トレンドを分析する</button>
+                        <div style="display: flex; gap: 8px;">
+                            <button id="btn-generate-longterm-ai" class="btn"
+                                style="background: #8b5cf6; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: 600; flex: 3;">中長期トレンドを分析する</button>
+                            <button id="btn-download-longterm-prompt" class="btn"
+                                style="background: #ffffff; color: #475569; border: 1px solid #cbd5e1; padding: 10px; border-radius: 8px; cursor: pointer; font-weight: 600; flex: 1; font-size: 0.85rem;"
+                                title="他のAIで使用するためにプロンプトをダウンロード">📥 ダウンロード</button>
+                        </div>
                     </div>
                 </div>
 

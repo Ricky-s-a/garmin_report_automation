@@ -2809,11 +2809,17 @@ async function generateLongTermAIAnalysis() {
 function resetLongTermAI() {
     const display = document.getElementById('longterm-ai-analysis-content');
     display.innerHTML = `
-        <button id="btn-generate-longterm-ai" class="btn"
-            style="background: #8b5cf6; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: 600; width: 100%;">中長期トレンドを分析する</button>
+        <div style="display: flex; gap: 8px;">
+            <button id="btn-generate-longterm-ai" class="btn"
+                style="background: #8b5cf6; color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: 600; flex: 3;">中長期トレンドを分析する</button>
+            <button id="btn-download-longterm-prompt" class="btn"
+                style="background: #ffffff; color: #475569; border: 1px solid #cbd5e1; padding: 10px; border-radius: 8px; cursor: pointer; font-weight: 600; flex: 1; font-size: 0.85rem;"
+                title="他のAIで使用するためにプロンプトをダウンロード">📥 ダウンロード</button>
+        </div>
     `;
     if (lastLongTermData) lastLongTermData.analysis = ""; // Clear stored analysis on reset
     document.getElementById('btn-generate-longterm-ai').addEventListener('click', generateLongTermAIAnalysis);
+    document.getElementById('btn-download-longterm-prompt').addEventListener('click', downloadLongTermPrompt);
 }
 
 function renderStoredLongTermAnalysis(text) {
@@ -2842,3 +2848,45 @@ function populateLongTermFields() {
         renderStoredLongTermAnalysis(lastLongTermData.analysis);
     }
 }
+
+async function downloadLongTermPrompt() {
+    if (!currentUser) {
+        alert("Please login first.");
+        return;
+    }
+    const menuEl = document.getElementById('upcoming-menu');
+    const menuText = menuEl ? menuEl.value : "";
+    
+    try {
+        const res = await fetch('/api/trends/prompt', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                user_id: currentUser.id,
+                upcoming_menu: menuText,
+                current_atl: latestATL,
+                current_ctl: latestCTL,
+                current_tsb: latestTSB
+            })
+        });
+        const data = await res.json();
+        if (res.ok && data.prompt) {
+            const blob = new Blob([data.prompt], { type: 'text/markdown' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `long_term_prompt_${new Date().toISOString().split('T')[0]}.md`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+        } else {
+            alert("Error: " + (data.detail || "Failed to generate prompt"));
+        }
+    } catch (e) {
+        console.error("Prompt download error", e);
+        alert("Error: " + e.message);
+    }
+}
+
+document.getElementById('btn-download-longterm-prompt')?.addEventListener('click', downloadLongTermPrompt);
