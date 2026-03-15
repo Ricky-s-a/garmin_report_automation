@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
+import concurrent.futures
 
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
@@ -278,12 +279,13 @@ def get_trail_presets(user_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/sync")
-def sync_data(req: SyncRequest):
-    return sync_all_data(req)
+def sync_data(req: SyncRequest, background_tasks: BackgroundTasks):
+    return sync_all_data(req, background_tasks)
 
 @app.post("/api/sync/all")
 def sync_all_data(req: SyncRequest, background_tasks: BackgroundTasks):
     """Unified sync for Garmin and Strava."""
+    results = {}
     # 1. Start Syncs in Parallel
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
         # Submit Garmin sync

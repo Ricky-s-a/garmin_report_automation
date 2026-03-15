@@ -153,10 +153,10 @@ def fetch_strava_streams(activity_id: int, access_token: str):
     r.raise_for_status()
     return r.json()
 
-def fetch_strava_data_with_dedup(user_id: str):
+def fetch_strava_data_with_dedup(user_id: str, days_back: int = 30):
     """
     Fetch Strava activities and save those that don't overlap with existing records.
-    Deduplication: +/- 2 minutes of startTimeLocal.
+    Deduplication: activityId check + +/- 10 minutes of startTimeLocal.
     """
     supabase = get_supabase_client()
     access_token = get_valid_access_token(supabase, user_id)
@@ -164,14 +164,17 @@ def fetch_strava_data_with_dedup(user_id: str):
         logging.info(f"Strava not connected for user {user_id}")
         return []
 
-    # Deduplicate against ALL existing activities for this user
+    # Get existing IDs, times and distances from DB
     existing_q = supabase.table("activities") \
-        .select("startTimeLocal, distance") \
+        .select("activityId, startTimeLocal, distance") \
         .eq("user_id", user_id) \
         .execute()
     
+    existing_ids = set()
     existing_data = [] # List of (datetime, distance)
     for row in existing_q.data:
+        aid = str(row['activityId'])
+        existing_ids.add(aid)
         try:
             st = datetime.fromisoformat(row['startTimeLocal'].replace(" ", "T")).replace(tzinfo=None)
             dist = float(row.get('distance') or 0)
@@ -179,9 +182,10 @@ def fetch_strava_data_with_dedup(user_id: str):
         except:
             pass
 
-    # 2. Fetch ALL Strava activities (full history, paginated)
-    logging.info("Fetching all activities from Strava (full history)...")
-    strava_acts = fetch_strava_activities(access_token, after_ts=0)
+    # 2. Fetch Strava activities from the last N days
+    logging.info(f"Fetching activities from Strava (last {days_back} days)...")
+    after_ts = int((datetime.now() - timedelta(days=days_back)).timestamp())
+    strava_acts = fetch_strava_activities(access_token, after_ts=after_ts)
     
     new_count = 0
     for s_act in strava_acts:
@@ -193,6 +197,13 @@ def fetch_strava_data_with_dedup(user_id: str):
             continue
             
         s_id = s_act.get('id')
+        db_id = f"strava_{s_id}"
+        
+        # 1. Direct ID check
+        if db_id in existing_ids:
+            logging.info(f"Skipping Strava activity {s_id} (ID already in DB)")
+            continue
+
         # Use start_date_local for consistent comparison with existing records
         s_start_str = s_act.get('start_date_local') # "2023-01-01T12:00:00Z"
         s_start = datetime.fromisoformat(s_start_str.replace("Z", "")).replace(tzinfo=None)
@@ -231,7 +242,7 @@ def fetch_strava_data_with_dedup(user_id: str):
 
         # 4. Save Strava summary to activities table
         # Map Strava fields to our DB schema
-        db_id = f"strava_{s_id}"
+        # db_id already defined above
         
         activity_data = {
             "activityId": db_id,
