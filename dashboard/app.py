@@ -952,7 +952,7 @@ def _format_rolling_stats_for_prompt(stats: dict) -> str:
 
     return "\n".join(lines)
 
-def _get_recent_activities_context(supabase, user_id: str, count: int = 10) -> str:
+def _get_recent_activities_context(supabase, user_id: str, count: int = 10, full_notes: bool = False) -> str:
     try:
         resp = supabase.table("activities").select("startTimeLocal, activityName, distance, averageSpeed, averageHR, aerobicTrainingEffect, description").eq("user_id", user_id).order("startTimeLocal", desc=True).limit(count).execute()
         if not resp.data:
@@ -977,9 +977,15 @@ def _get_recent_activities_context(supabase, user_id: str, count: int = 10) -> s
             hr = str(a.get("averageHR") or "--")
             te = str(a.get("aerobicTrainingEffect") or "--")
             
-            # Add description if exists (briefly)
             desc = a.get("description")
-            desc_str = f" (備考: {desc.strip()[:35]}...)" if desc and desc.strip() else ""
+            if desc and desc.strip():
+                if full_notes:
+                    desc_str = f"\n   >> 備考: {desc.strip()}"
+                else:
+                    desc_truncated = desc.strip()[:35]
+                    desc_str = f" (備考: {desc_truncated}...)" if len(desc.strip()) > 35 else f" (備考: {desc.strip()})"
+            else:
+                desc_str = ""
             
             lines.append(f"{dt:<12} {name:<25} {dist_km:>5.1f}k {pace:>7} {hr:>5} {te:>4}{desc_str}")
             
@@ -987,6 +993,7 @@ def _get_recent_activities_context(supabase, user_id: str, count: int = 10) -> s
     except Exception as e:
         logging.warning(f"Error fetching recent activities context: {e}")
         return ""
+
 
 
 def _get_pace_zone_context(supabase, user_id: str, limit: int = 15) -> str:
@@ -1057,7 +1064,8 @@ def _build_longterm_user_content(supabase, req, profile_data, rolling_stats_row,
     act_count = 30 if enriched else 10
     pz_limit = 30 if enriched else 15 # 6 months vs 3 months
     
-    recent_activities = _get_recent_activities_context(supabase, req.user_id, count=act_count)
+    recent_activities = _get_recent_activities_context(supabase, req.user_id, count=act_count, full_notes=enriched)
+
     pace_zones = _get_pace_zone_context(supabase, req.user_id, limit=pz_limit)
     weekly_summary = _get_weekly_training_summary(supabase, req.user_id, limit_weeks=8 if enriched else 4)
 
