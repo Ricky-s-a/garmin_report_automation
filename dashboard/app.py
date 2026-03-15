@@ -952,6 +952,112 @@ def _format_rolling_stats_for_prompt(stats: dict) -> str:
 
     return "\n".join(lines)
 
+def _get_recent_activities_context(supabase, user_id: str, count: int = 10) -> str:
+    try:
+        resp = supabase.table("activities").select("startTimeLocal, activityName, distance, averageSpeed, averageHR, aerobicTrainingEffect, description").eq("user_id", user_id).order("startTimeLocal", desc=True).limit(count).execute()
+        if not resp.data:
+            return ""
+        
+        lines = ["【最近の個別アクティビティ履歴 (直近10件)】"]
+        lines.append(f"{'日付':<12} {'名称':<25} {'距離':>6} {'ペース':>7} {'心拍':>5} {'TE':>4}")
+        lines.append("-" * 75)
+        
+        for a in resp.data:
+            dt = a.get("startTimeLocal", "")[:10]
+            name = (a.get("activityName") or "Untitled")[:24]
+            dist_m = a.get("distance", 0)
+            dist_km = dist_m / 1000 if dist_m else 0
+            
+            speed = a.get("averageSpeed", 0)
+            pace = "--"
+            if speed > 0:
+                mpk = 1000 / speed / 60
+                pace = f"{int(mpk)}:{int((mpk-int(mpk))*60):02d}"
+                
+            hr = str(a.get("averageHR") or "--")
+            te = str(a.get("aerobicTrainingEffect") or "--")
+            
+            # Add description if exists (briefly)
+            desc = a.get("description")
+            desc_str = f" (備考: {desc.strip()[:30]}...)" if desc and desc.strip() else ""
+            
+            lines.append(f"{dt:<12} {name:<25} {dist_km:>5.1f}k {pace:>7} {hr:>5} {te:>4}{desc_str}")
+            
+        return "\n".join(lines)
+    except Exception as e:
+        logging.warning(f"Error fetching recent activities context: {e}")
+        return ""
+
+def _get_pace_zone_context(supabase, user_id: str) -> str:
+    try:
+        # Get last 3 months of monthly stats (5 zones * 3 months)
+        resp = supabase.table("pace_zone_stats").select("*").eq("user_id", user_id).eq("period_type", "monthly").order("period_key", desc=True).limit(15).execute()
+        if not resp.data:
+            return ""
+        
+        # Group by month
+        by_month = defaultdict(list)
+        for r in resp.data:
+            by_month[r["period_key"]].append(r)
+            
+        lines = ["【ペース帯別トレーニング分布 (月次推移)】"]
+        for month in sorted(by_month.keys(), reverse=True):
+            lines.append(f"■ {month}")
+            # Order by zone name
+            for r in sorted(by_month[month], key=lambda x: x["zone_name"]):
+                time_m = r.get("time_mins", 0)
+                if time_m > 0:
+                    lines.append(f"  - {r['zone_name']:<10}: {time_m:>5.1f} 分 (平均心拍: {r.get('avg_hr') or '--'} bpm)")
+        
+        return "\n".join(lines)
+    except Exception as e:
+        logging.warning(f"Error fetching pace zone context: {e}")
+        return ""
+
+def _build_longterm_user_content(supabase, req, runner_profile, rolling_stats_row):
+    rolling_context = ""
+    if rolling_stats_row:
+        rolling_context = _format_rolling_stats_for_prompt(rolling_stats_row)
+    
+    recent_activities = _get_recent_activities_context(supabase, req.user_id)
+    pace_zones = _get_pace_zone_context(supabase, req.user_id)
+    
+    # Latest VO2Max
+    vo2_max_str = ""
+    try:
+        vo2_resp = supabase.table("activities").select("vO2MaxValue").eq("user_id", req.user_id).order("startTimeLocal", desc=True).limit(1).execute()
+        if vo2_resp.data and vo2_resp.data[0].get("vO2MaxValue"):
+            vo2_max_str = f"最新の推定VO2Max: {vo2_resp.data[0]['vO2MaxValue']}"
+    except Exception:
+        pass
+    
+    metrics_context = ""
+    if req.current_atl is not None or req.current_ctl is not None or req.current_tsb is not None:
+        metrics_context = f"""【現在のトレーニング指標】
+- ATL (疲労/短期負荷): {req.current_atl if req.current_atl is not None else "--"}
+- CTL (体力/長期負荷): {req.current_ctl if req.current_ctl is not None else "--"}
+- TSB (フォーム/バランス): {req.current_tsb if req.current_tsb is not None else "--"}
+"""
+
+    user_content = f"""{metrics_context}
+{vo2_max_str}
+
+【現在のユーザープロファイル・目標】
+{runner_profile if runner_profile else "記載なし"}
+
+{rolling_context if rolling_context else "過去の統計データがまだ十分ではありません。"}
+
+{pace_zones if pace_zones else ""}
+
+{recent_activities if recent_activities else ""}
+
+【来週の予定練習メニュー】
+{req.upcoming_menu if req.upcoming_menu else "未入力"}
+
+上記の情報に基づき、中長期的な分析とアドバイスをお願いします。"""
+    return user_content
+
+
 
 
 
@@ -1392,24 +1498,7 @@ def get_trends_analysis(req: TrendsAnalysisRequest):
             system_instruction = "You are a running coach analyzing long-term trends."
             
         # 5. Construct User Prompt
-        metrics_context = ""
-        if req.current_atl is not None or req.current_ctl is not None or req.current_tsb is not None:
-            metrics_context = f"""【現在のトレーニング指標】
-- ATL (疲労/短期負荷): {req.current_atl if req.current_atl is not None else "--"}
-- CTL (体力/長期負荷): {req.current_ctl if req.current_ctl is not None else "--"}
-- TSB (フォーム/バランス): {req.current_tsb if req.current_tsb is not None else "--"}
-"""
-
-        user_content = f"""{metrics_context}
-【現在のユーザープロファイル・目標】
-{runner_profile if runner_profile else "記載なし"}
-
-{rolling_context if rolling_context else "過去の統計データがまだ十分ではありません。"}
-
-【来週の予定練習メニュー】
-{req.upcoming_menu if req.upcoming_menu else "未入力"}
-
-上記の情報に基づき、中長期的な分析とアドバイスをお願いします。"""
+        user_content = _build_longterm_user_content(supabase, req, runner_profile, rs_resp.data[0] if rs_resp.data else None)
 
         # 6. Call Gemini
         api_key = os.environ.get("GEMINI_API_KEY")
@@ -1475,23 +1564,7 @@ def get_trends_prompt_preview(req: TrendsAnalysisRequest):
                 system_instruction = f.read().strip()
         except Exception:
             system_instruction = "You are a running coach analyzing long-term trends."
-        metrics_context = ""
-        if req.current_atl is not None or req.current_ctl is not None or req.current_tsb is not None:
-            metrics_context = f"""【現在のトレーニング指標】
-- ATL (疲労/短期負荷): {req.current_atl if req.current_atl is not None else "--"}
-- CTL (体力/長期負荷): {req.current_ctl if req.current_ctl is not None else "--"}
-- TSB (フォーム/バランス): {req.current_tsb if req.current_tsb is not None else "--"}
-"""
-        user_content = f"""{metrics_context}
-【現在のユーザープロファイル・目標】
-{runner_profile if runner_profile else "記載なし"}
-
-{rolling_context if rolling_context else "過去の統計データがまだ十分ではありません。"}
-
-【来週の予定練習メニュー】
-{req.upcoming_menu if req.upcoming_menu else "未入力"}
-
-上記の情報に基づき、中長期的な分析とアドバイスをお願いします。"""
+        user_content = _build_longterm_user_content(supabase, req, runner_profile, rs_resp.data[0] if rs_resp.data else None)
         full_prompt = f"# SYSTEM PROMPT\n{system_instruction}\n\n# USER PROMPT\n{user_content}"
         return {"prompt": full_prompt}
     except Exception as e:
