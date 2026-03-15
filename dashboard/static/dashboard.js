@@ -2270,7 +2270,8 @@ function renderTrailCalculator() {
                 y: paceSecKm,
                 name: act.activityName || `Run (${distKm.toFixed(1)}k)`,
                 dist: distKm,
-                duration: act.duration
+                duration: act.duration,
+                date: act.startTimeLocal
             });
             return true;
         }
@@ -2279,8 +2280,33 @@ function renderTrailCalculator() {
 
     document.getElementById('trail-base-count').textContent = trailRuns.length;
 
-    // Calculate Linear Regression: y = ax + b
-    if (trailDataPoints.length > 1) {
+    // Calculate Weighted Linear Regression: y = ax + b
+    // Newer data points get higher weights.
+    if (trailDataPoints.length > 2) {
+        let n = trailDataPoints.length;
+        let sumW = 0, sumWX = 0, sumWY = 0, sumWXX = 0, sumWXY = 0;
+        
+        trailDataPoints.forEach((p, i) => {
+            // Weight: 1.0 for newest, 0.2 for oldest
+            const w = n > 1 ? 0.2 + 0.8 * (1 - i / (n - 1)) : 1.0;
+            sumW += w;
+            sumWX += w * p.x;
+            sumWY += w * p.y;
+            sumWXX += w * p.x * p.x;
+            sumWXY += w * p.x * p.y;
+        });
+
+        const denominator = (sumW * sumWXX - sumWX * sumWX);
+        if (Math.abs(denominator) > 0.000001) {
+            trailRegressionModel.a = (sumW * sumWXY - sumWX * sumWY) / denominator;
+            trailRegressionModel.b = (sumWY - trailRegressionModel.a * sumWX) / sumW;
+        } else {
+            trailRegressionModel.a = 0;
+            trailRegressionModel.b = sumWY / sumW;
+        }
+        document.getElementById('trail-regression-formula').textContent = `Pace (s/km) = ${trailRegressionModel.a.toFixed(2)} * D+(m/km) + ${trailRegressionModel.b.toFixed(2)} (Weighted)`;
+    } else if (trailDataPoints.length > 1) {
+        // Fallback to simple regression if not enough points for stable weighting
         let n = trailDataPoints.length;
         let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
         trailDataPoints.forEach(p => {
@@ -2289,24 +2315,12 @@ function renderTrailCalculator() {
             sumXY += (p.x * p.y);
             sumXX += (p.x * p.x);
         });
-
-        const meanX = sumX / n;
-        const meanY = sumY / n;
-
-        const numerator = sumXY - n * meanX * meanY;
-        const denominator = sumXX - n * meanX * meanX;
-
-        if (denominator !== 0) {
-            const a = numerator / denominator;
-            const b = meanY - a * meanX;
-            trailRegressionModel.a = a;
-            trailRegressionModel.b = b;
-        } else {
-            // fallback
-            trailRegressionModel.a = 0;
-            trailRegressionModel.b = meanY;
+        const den = (n * sumXX - sumX * sumX);
+        if (den !== 0) {
+            trailRegressionModel.a = (n * sumXY - sumX * sumY) / den;
+            trailRegressionModel.b = (sumY - trailRegressionModel.a * sumX) / n;
         }
-        document.getElementById('trail-regression-formula').textContent = `Pace (s/km) = ${trailRegressionModel.a.toFixed(2)} * 上昇高度(m/km) + ${trailRegressionModel.b.toFixed(2)}`;
+        document.getElementById('trail-regression-formula').textContent = `Pace (s/km) = ${trailRegressionModel.a.toFixed(2)} * D+(m/km) + ${trailRegressionModel.b.toFixed(2)}`;
     } else {
         document.getElementById('trail-regression-formula').textContent = 'Not enough data points';
     }
@@ -2368,14 +2382,23 @@ function drawTrailChart(targetX, predPaceSec, targetDist, raceName) {
     ];
 
     const n = trailDataPoints.length;
-    const backgroundColors = trailDataPoints.map((p, i) => {
-        // globalActivities is newest-first, so i=0 is newest.
-        // Opacity: newest (i=0) -> 1.0, oldest (i=n-1) -> 0.15
-        const opacity = n > 1 ? 0.15 + 0.85 * (1 - i / (n - 1)) : 1.0;
-        return `rgba(2, 132, 199, ${opacity})`;
+    // We want to render newest points LAST so they are on top.
+    // trailDataPoints is newest-first (i=0 is newest).
+    const scatterDataRaw = trailDataPoints.map((p, i) => {
+        const opacity = n > 1 ? 0.2 + 0.8 * (1 - i / (n - 1)) : 1.0;
+        return {
+            x: p.x,
+            y: p.y,
+            name: p.name,
+            dist: p.dist,
+            color: `rgba(2, 132, 199, ${opacity})`,
+            zIndex: n - i // High for newest
+        };
     });
 
-    const scatterData = trailDataPoints.map(p => ({ x: p.x, y: p.y, name: p.name, dist: p.dist }));
+    // Sort by zIndex ASC for rendering order (lowest zIndex drawn first)
+    const scatterData = [...scatterDataRaw].sort((a, b) => a.zIndex - b.zIndex);
+    const backgroundColors = scatterData.map(d => d.color);
 
     // Format Y axis (sec to HH:MM:SS for tooltip and labels)
     const formatY = (val) => {
