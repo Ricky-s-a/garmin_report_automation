@@ -237,13 +237,7 @@ function setupNavigation() {
                 const res = await fetch(`/api/garmin-credentials?user_id=${encodeURIComponent(currentUser.id)}`);
                 if (res.ok) {
                     const data = await res.json();
-                    document.getElementById('settings-garmin-email').value = data.garmin_email || '';
-                    document.getElementById('settings-garmin-password').value = data.garmin_email ? '********' : ''; 
-                    document.getElementById('settings-runner-profile').value = data.runner_profile || '';
-                    document.getElementById('settings-max-hr').value = data.max_hr || '';
-                    document.getElementById('settings-resting-hr').value = localStorage.getItem('garmin_resting_hr') || '';
-                    document.getElementById('settings-weekly-target').value = localStorage.getItem('garmin_weekly_target') || 50;
-                    document.getElementById('settings-status').textContent = '';
+                    populateModalFields(data);
                 }
             } catch (e) {
                 console.error("Failed to fetch settings", e);
@@ -291,6 +285,17 @@ function setupNavigation() {
         const profile = document.getElementById('settings-runner-profile').value;
         const maxHrStr = document.getElementById('settings-max-hr').value;
         const mhr = maxHrStr ? parseInt(maxHrStr) : null;
+        const tokensStr = document.getElementById('settings-garmin-session-tokens').value;
+        let tokens = null;
+        if (tokensStr && tokensStr.trim()) {
+            try {
+                tokens = JSON.parse(tokensStr);
+            } catch (e) {
+                alert("Invalid JSON for session tokens.");
+                return;
+            }
+        }
+
         const status = document.getElementById('settings-status');
 
         if (!currentUser || !currentUser.id) {
@@ -315,7 +320,8 @@ function setupNavigation() {
                     garmin_email: email,
                     garmin_password: password === '********' ? '' : password,
                     runner_profile: profile,
-                    max_hr: mhr
+                    max_hr: mhr,
+                    garmin_session_tokens: tokens
                 })
             });
             if (res.ok) {
@@ -340,6 +346,27 @@ function setupNavigation() {
             btnSaveCredentials.disabled = false;
         }
     });
+
+    function populateModalFields(data) {
+        console.log("Populating modal with:", data);
+        const emailInput = document.getElementById('settings-garmin-email');
+        const pwInput = document.getElementById('settings-garmin-password');
+        const profileInput = document.getElementById('settings-runner-profile');
+        const mhrInput = document.getElementById('settings-max-hr');
+        const rhrInput = document.getElementById('settings-resting-hr');
+        const wtInput = document.getElementById('settings-weekly-target');
+        const tokensInput = document.getElementById('settings-garmin-session-tokens');
+
+        if (emailInput) emailInput.value = data.garmin_email || '';
+        if (pwInput) pwInput.value = data.garmin_email ? '********' : '';
+        if (profileInput) profileInput.value = data.runner_profile || '';
+        if (mhrInput) mhrInput.value = data.max_hr || '';
+        if (rhrInput) rhrInput.value = localStorage.getItem('garmin_resting_hr') || '';
+        if (wtInput) wtInput.value = localStorage.getItem('garmin_weekly_target') || 50;
+        if (tokensInput) {
+            tokensInput.value = data.garmin_session_tokens ? JSON.stringify(data.garmin_session_tokens, null, 2) : '';
+        }
+    }
 
     const btnDeleteData = document.getElementById('btn-delete-data');
     if (btnDeleteData) {
@@ -571,14 +598,7 @@ async function fetchUserSettings() {
             userRestingHr = parseInt(localStorage.getItem('garmin_resting_hr') || '55') || 55;
             
             // Also update modal inputs if they exist (important if modal is open)
-            const mhrInput = document.getElementById('settings-max-hr');
-            if (mhrInput && !mhrInput.value) mhrInput.value = data.max_hr || '';
-            const rhrInput = document.getElementById('settings-resting-hr');
-            if (rhrInput && !rhrInput.value) rhrInput.value = localStorage.getItem('garmin_resting_hr') || '';
-            const wtInput = document.getElementById('settings-weekly-target');
-            if (wtInput && !wtInput.value) wtInput.value = localStorage.getItem('garmin_weekly_target') || 50;
-            const profileInput = document.getElementById('settings-runner-profile');
-            if (profileInput && !profileInput.value) profileInput.value = data.runner_profile || '';
+            populateModalFields(data);
 
             lastLongTermData = {
                 menu: data.last_upcoming_menu || "",

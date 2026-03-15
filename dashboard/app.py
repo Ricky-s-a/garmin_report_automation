@@ -66,6 +66,7 @@ class CredentialRequest(BaseModel):
     max_hr: Optional[int] = None
     resting_hr: Optional[int] = None
     weekly_target_distance: Optional[float] = None
+    garmin_session_tokens: Optional[dict] = None
 
 class TrailPresetsRequest(BaseModel):
     user_id: str
@@ -144,6 +145,8 @@ def save_credentials(req: CredentialRequest):
             data["runner_profile"] = req.runner_profile
         if req.max_hr is not None:
             data["max_hr"] = req.max_hr
+        if req.garmin_session_tokens is not None:
+            data["garmin_session_tokens"] = req.garmin_session_tokens
         
         # Note: resting_hr and weekly_target_distance are currently managed in localStorage 
         # because the database columns do not exist yet.
@@ -162,13 +165,14 @@ def save_credentials(req: CredentialRequest):
 def get_credentials(user_id: str):
     try:
         supabase = get_supabase_client()
-        existing = supabase.table("user_profiles").select("garmin_email,runner_profile,max_hr").eq("user_id", user_id).execute()
+        existing = supabase.table("user_profiles").select("garmin_email,runner_profile,max_hr,garmin_session_tokens").eq("user_id", user_id).execute()
         if existing.data and len(existing.data) > 0:
             row = existing.data[0]
             return {
                 "garmin_email": row.get("garmin_email", ""),
                 "runner_profile": row.get("runner_profile", ""),
                 "max_hr": row.get("max_hr"),
+                "garmin_session_tokens": row.get("garmin_session_tokens"),
                 "last_upcoming_menu": "",
                 "last_longterm_analysis": "",
                 "last_longterm_model": ""
