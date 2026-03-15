@@ -577,6 +577,8 @@ async function fetchUserSettings() {
             if (rhrInput && !rhrInput.value) rhrInput.value = localStorage.getItem('garmin_resting_hr') || '';
             const wtInput = document.getElementById('settings-weekly-target');
             if (wtInput && !wtInput.value) wtInput.value = localStorage.getItem('garmin_weekly_target') || 50;
+            const profileInput = document.getElementById('settings-runner-profile');
+            if (profileInput && !profileInput.value) profileInput.value = data.runner_profile || '';
 
             lastLongTermData = {
                 menu: data.last_upcoming_menu || "",

@@ -162,16 +162,16 @@ def save_credentials(req: CredentialRequest):
 def get_credentials(user_id: str):
     try:
         supabase = get_supabase_client()
-        existing = supabase.table("user_profiles").select("garmin_email,runner_profile,max_hr,last_upcoming_menu,last_longterm_analysis,last_longterm_model").eq("user_id", user_id).execute()
+        existing = supabase.table("user_profiles").select("garmin_email,runner_profile,max_hr").eq("user_id", user_id).execute()
         if existing.data and len(existing.data) > 0:
             row = existing.data[0]
             return {
                 "garmin_email": row.get("garmin_email", ""),
                 "runner_profile": row.get("runner_profile", ""),
                 "max_hr": row.get("max_hr"),
-                "last_upcoming_menu": row.get("last_upcoming_menu", ""),
-                "last_longterm_analysis": row.get("last_longterm_analysis", ""),
-                "last_longterm_model": row.get("last_longterm_model", "")
+                "last_upcoming_menu": "",
+                "last_longterm_analysis": "",
+                "last_longterm_model": ""
             }
         return {
             "garmin_email": "", "runner_profile": "", "max_hr": None,
