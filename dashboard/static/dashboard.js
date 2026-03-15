@@ -598,7 +598,7 @@ async function fetchUserSettings() {
             userRestingHr = parseInt(localStorage.getItem('garmin_resting_hr') || '55') || 55;
             
             // Also update modal inputs if they exist (important if modal is open)
-            populateModalFields(data);
+            if (window.populateModalFields) window.populateModalFields(data);
 
             lastLongTermData = {
                 menu: data.last_upcoming_menu || "",
@@ -766,7 +766,8 @@ async function loadActivityDetails(activity, allActivities) {
                     <div style="display:flex; align-items:center; margin-bottom:8px; gap:8px; flex-wrap:wrap;">
                         <span style="font-weight:700; font-size:0.95rem; color:#1e293b;">📌 短文レポート (Strava風)</span>
                         <span style="font-size:0.75rem; background:#f3e8ff; color:#7c3aed; padding:2px 8px; border-radius:10px;">🤖 ${usedModel}</span>
-                        <button id="btn-regen-short" style="margin-left:auto; background:#10b981; color:white; border:none; padding:5px 12px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">🔄 再生成</button>
+                        <button id="btn-download-prompt-short" style="margin-left:auto; background:#ffffff; color:#475569; border:1px solid #cbd5e1; padding:5px 12px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">📥 プロンプト</button>
+                        <button id="btn-regen-short" style="background:#10b981; color:white; border:none; padding:5px 12px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">🔄 再生成</button>
                     </div>
                      <details open style="background: white; border-radius: 8px; border: 1px solid #e2e8f0; overflow: hidden;">
                         <summary style="cursor: pointer; font-weight: 600; padding: 10px 15px; background: #f8fafc; color: #475569; user-select: none; border-bottom: 1px solid #e2e8f0; list-style-position: inside;">短文レポート (展開/折りたたみ)</summary>
@@ -776,8 +777,9 @@ async function loadActivityDetails(activity, allActivities) {
             `;
         } else {
             htmlContent += `
-                <div style="margin-bottom: 20px;">
+                <div style="margin-bottom: 20px; display: flex; gap: 8px;">
                     <button id="btn-gen-short" style="background:#10b981; color:white; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; font-weight:600; font-size:0.85rem;">✨ 生成 (短文レポート)</button>
+                    <button id="btn-download-prompt-short" style="background:#ffffff; color:#475569; border:1px solid #cbd5e1; padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">📥 プロンプト</button>
                 </div>
             `;
         }
@@ -791,7 +793,8 @@ async function loadActivityDetails(activity, allActivities) {
                     <div style="display:flex; align-items:center; margin-bottom:8px; gap:8px; flex-wrap:wrap;">
                         <span style="font-weight:700; font-size:0.95rem; color:#1e293b;">📑 詳細レポート</span>
                         <span style="font-size:0.75rem; background:#f3e8ff; color:#7c3aed; padding:2px 8px; border-radius:10px;">🤖 ${usedModel}</span>
-                        <button id="btn-regen-long" style="margin-left:auto; background:#8b5cf6; color:white; border:none; padding:5px 12px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">🔄 再生成</button>
+                        <button id="btn-download-prompt-long" style="margin-left:auto; background:#ffffff; color:#475569; border:1px solid #cbd5e1; padding:5px 12px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">📥 プロンプト</button>
+                        <button id="btn-regen-long" style="background:#8b5cf6; color:white; border:none; padding:5px 12px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">🔄 再生成</button>
                     </div>
                      <details style="background: white; border-radius: 8px; border: 1px solid #e2e8f0; overflow: hidden;">
                         <summary style="cursor: pointer; font-weight: 600; padding: 10px 15px; background: #f8fafc; color: #475569; user-select: none; border-bottom: 1px solid #e2e8f0; list-style-position: inside;">詳細レポート (展開/折りたたみ)</summary>
@@ -801,8 +804,9 @@ async function loadActivityDetails(activity, allActivities) {
             `;
         } else {
             htmlContent += `
-                <div style="margin-bottom: 10px;">
+                <div style="margin-bottom: 10px; display: flex; gap: 8px;">
                     <button id="btn-gen-long" style="background:#8b5cf6; color:white; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; font-weight:600; font-size:0.85rem;">🧠 生成 (詳細レポート)</button>
+                    <button id="btn-download-prompt-long" style="background:#ffffff; color:#475569; border:1px solid #cbd5e1; padding:8px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">📥 プロンプト</button>
                 </div>
             `;
         }
@@ -811,8 +815,11 @@ async function loadActivityDetails(activity, allActivities) {
 
         if (document.getElementById('btn-regen-short')) document.getElementById('btn-regen-short').addEventListener('click', () => runAnalysis(true, 'short'));
         if (document.getElementById('btn-gen-short')) document.getElementById('btn-gen-short').addEventListener('click', () => runAnalysis(false, 'short'));
+        if (document.getElementById('btn-download-prompt-short')) document.getElementById('btn-download-prompt-short').addEventListener('click', () => downloadSinglePrompt(activity.activityId, 'short'));
+        
         if (document.getElementById('btn-regen-long')) document.getElementById('btn-regen-long').addEventListener('click', () => runAnalysis(true, 'long'));
         if (document.getElementById('btn-gen-long')) document.getElementById('btn-gen-long').addEventListener('click', () => runAnalysis(false, 'long'));
+        if (document.getElementById('btn-download-prompt-long')) document.getElementById('btn-download-prompt-long').addEventListener('click', () => downloadSinglePrompt(activity.activityId, 'long'));
     }
 
     // Initial render
@@ -2950,3 +2957,31 @@ async function downloadLongTermPrompt() {
 }
 
 document.getElementById('btn-download-longterm-prompt')?.addEventListener('click', downloadLongTermPrompt);
+
+async function downloadSinglePrompt(activityId, reportType = "long") {
+    if (!currentUser) {
+        alert("Please login first.");
+        return;
+    }
+    
+    try {
+        const res = await fetch(`/api/activities/${activityId}/prompt?report_type=${reportType}`);
+        const data = await res.json();
+        if (res.ok && data.prompt) {
+            const blob = new Blob([data.prompt], { type: 'text/markdown' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `single_run_prompt_${activityId}_${reportType}.md`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+        } else {
+            alert("Error: " + (data.detail || "Failed to generate prompt"));
+        }
+    } catch (e) {
+        console.error("Prompt download error", e);
+        alert("Error: " + e.message);
+    }
+}

@@ -1193,7 +1193,7 @@ def get_activity_gpx(activity_id: str):
         
     return df_filtered.to_dict(orient="records")
 
-def _generate_single_activity_analysis(activity_id: str, report_type: str = "long", model: str = "gemini-2.0-flash", regenerate: bool = False):
+def _generate_single_activity_analysis(activity_id: str, report_type: str = "long", model: str = "gemini-2.0-flash", regenerate: bool = False, return_prompt: bool = False):
     # Allowlist to prevent arbitrary model injection
     ALLOWED_MODELS = {"gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash"}
     if model not in ALLOWED_MODELS:
@@ -1212,7 +1212,7 @@ def _generate_single_activity_analysis(activity_id: str, report_type: str = "lon
     # Return cached analysis if it exists and regenerate is not requested
     cache_field = "aiAnalysisShort" if report_type == "short" else "aiAnalysis"
     cached = activity.get(cache_field)
-    if cached and not regenerate:
+    if cached and not regenerate and not return_prompt:
         return {"analysis": cached, "cached": True, "model": model}
     
     # Read system prompt
@@ -1487,6 +1487,11 @@ def _generate_single_activity_analysis(activity_id: str, report_type: str = "lon
 """
 
     api_key = os.environ.get("GEMINI_API_KEY")
+
+    if return_prompt:
+        full_prompt = f"# SYSTEM PROMPT\n{system_instruction}\n\n# USER PROMPT\n{user_content}"
+        return {"prompt": full_prompt}
+
     if not api_key:
         raise Exception("GEMINI_API_KEY not set")
         
@@ -1582,6 +1587,14 @@ def _auto_generate_recent_reports(user_id: str, count: int = 2):
 def get_activity_analysis(activity_id: str, regenerate: bool = False, model: str = "gemini-2.0-flash", report_type: str = "long"):
     try:
         res = _generate_single_activity_analysis(activity_id, report_type, model, regenerate)
+        return res
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/activities/{activity_id}/prompt")
+def get_activity_prompt(activity_id: str, report_type: str = "long"):
+    try:
+        res = _generate_single_activity_analysis(activity_id, report_type=report_type, return_prompt=True)
         return res
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
