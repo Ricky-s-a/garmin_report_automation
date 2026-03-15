@@ -1006,7 +1006,7 @@ def _get_recent_activities_context(supabase, user_id: str, count: int = 10, full
 
 
 
-def _get_pace_zone_context(supabase, user_id: str, limit: int = 15) -> str:
+def _get_pace_zone_context(supabase, user_id: str, limit: int = 15, enriched: bool = False) -> str:
     try:
         # monthly stats (5 zones * N months)
         resp = supabase.table("pace_zone_stats").select("*").eq("user_id", user_id).eq("period_type", "monthly").order("period_key", desc=True).limit(limit).execute()
@@ -1025,7 +1025,16 @@ def _get_pace_zone_context(supabase, user_id: str, limit: int = 15) -> str:
             for r in sorted(by_month[month], key=lambda x: x["zone_name"]):
                 time_m = r.get("time_mins", 0)
                 if time_m > 0:
-                    lines.append(f"  - {r['zone_name']:<10}: {time_m:>5.1f} 分 (平均心拍: {r.get('avg_hr') or '--'} bpm)")
+                    hr = r.get('avg_hr') or '--'
+                    ae = r.get('avg_ae') or '--'
+                    cad = r.get('avg_cadence') or '--'
+                    stride = r.get('avg_stride') or '--'
+                    parts = [f"時間: {time_m:>5.1f} 分", f"心拍: {hr:>3} bpm", f"効率(Ae): {ae:>4}"]
+                    if enriched:
+                        osc = r.get('avg_vert_osc') or '--'
+                        gct = r.get('avg_gct') or '--'
+                        parts.extend([f"ピッチ: {cad:>3} spm", f"歩幅: {stride:>4} m", f"上下動: {osc:>4} cm", f"接地: {gct:>3} ms"])
+                    lines.append(f"  - {r['zone_name']:<10}: " + ", ".join(parts))
         
         return "\n".join(lines)
     except Exception as e:
@@ -1076,9 +1085,32 @@ def _build_longterm_user_content(supabase, req, profile_data, rolling_stats_row,
     
     recent_activities = _get_recent_activities_context(supabase, req.user_id, count=act_count, full_notes=enriched)
 
-    pace_zones = _get_pace_zone_context(supabase, req.user_id, limit=pz_limit)
+    pace_zones = _get_pace_zone_context(supabase, req.user_id, limit=pz_limit, enriched=enriched)
     weekly_summary = _get_weekly_training_summary(supabase, req.user_id, limit_weeks=8 if enriched else 4)
 
+    # 1. Training Effect Trend (Enriched only)
+    te_context = ""
+    if enriched:
+        try:
+            te_resp = supabase.table("activities").select("startTimeLocal, aerobicTrainingEffect, anaerobicTrainingEffect").eq("user_id", req.user_id).order("startTimeLocal", desc=True).limit(20).execute()
+            if te_resp.data:
+                te_lines = ["【最近のトレーニング効果 (TE) 推移】"]
+                for a in te_resp.data:
+                    dt = a["startTimeLocal"][:10]
+                    ae = a.get("aerobicTrainingEffect") or 0.0
+                    an = a.get("anaerobicTrainingEffect") or 0.0
+                    te_lines.append(f"  - {dt}: 有酸素 {ae:.1f} / 無酸素 {an:.1f}")
+                te_context = "\n" + "\n".join(te_lines) + "\n"
+        except Exception: pass
+
+    # 2. Zone 2 Proportion Trend (Approximate from activities)
+    z2_context = ""
+    if enriched:
+        try:
+            # We don't have a direct zone2_ratio in activities, but we can look at aerobicTrainingEffect or 
+            # approximate from long-term pace_zone_stats monthly rollup.
+            pass # already covered by pace_zones detailed breakdown in enriched mode
+        except Exception: pass
     
     # Latest VO2Max
     vo2_max_str = ""
@@ -1108,7 +1140,7 @@ def _build_longterm_user_content(supabase, req, profile_data, rolling_stats_row,
 {rolling_context if rolling_context else "過去の統計データがまだ十分ではありません。"}
 
 {pace_zones if pace_zones else ""}
-
+{te_context}
 {weekly_summary if weekly_summary else ""}
 
 {recent_activities if recent_activities else ""}
