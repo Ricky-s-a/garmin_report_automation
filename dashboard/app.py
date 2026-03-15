@@ -954,7 +954,7 @@ def _format_rolling_stats_for_prompt(stats: dict) -> str:
 
 def _get_recent_activities_context(supabase, user_id: str, count: int = 10, full_notes: bool = False) -> str:
     try:
-        resp = supabase.table("activities").select("startTimeLocal, activityName, distance, averageSpeed, averageHR, aerobicTrainingEffect, description, aiAnalysisShort").eq("user_id", user_id).order("startTimeLocal", desc=True).limit(count).execute()
+        resp = supabase.table("activities").select("startTimeLocal, activityName, distance, averageSpeed, averageHR, aerobicTrainingEffect, description, aiAnalysisShort, aiAnalysis").eq("user_id", user_id).order("startTimeLocal", desc=True).limit(count).execute()
         if not resp.data:
             return ""
         
@@ -986,10 +986,14 @@ def _get_recent_activities_context(supabase, user_id: str, count: int = 10, full
                     desc_truncated = desc.strip()[:35]
                     desc_str += f" (備考: {desc_truncated}...)" if len(desc.strip()) > 35 else f" (備考: {desc.strip()})"
             
-            # Add AI short analysis if available and in enriched mode
-            ai_short = a.get("aiAnalysisShort")
-            if full_notes and ai_short and ai_short.strip():
-                desc_str += f"\n   >> AIコーチの評価: {ai_short.strip()}"
+            # Add AI analyses if available and in enriched mode
+            if full_notes:
+                ai_long = a.get("aiAnalysis")
+                ai_short = a.get("aiAnalysisShort")
+                if ai_long and ai_long.strip():
+                    desc_str += f"\n   >> AIコーチの詳細レポート:\n{ai_long.strip()}"
+                elif ai_short and ai_short.strip():
+                    desc_str += f"\n   >> AIコーチの評価: {ai_short.strip()}"
             
             lines.append(f"{dt:<12} {name:<25} {dist_km:>5.1f}k {pace:>7} {hr:>5} {te:>4}{desc_str}")
             
@@ -997,6 +1001,7 @@ def _get_recent_activities_context(supabase, user_id: str, count: int = 10, full
     except Exception as e:
         logging.warning(f"Error fetching recent activities context: {e}")
         return ""
+
 
 
 
