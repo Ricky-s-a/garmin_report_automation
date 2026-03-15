@@ -52,9 +52,9 @@ def main():
     # 5. リクエスト送信・ターミナルへの出力
     print("Geminiにリクエストを送信しています...\n")
     try:
-        # システムプロンプトをConfigで指定し、軽量な gemini-2.5-flash に送信
+        # システムプロンプトをConfigで指定し、軽量な gemini-1.5-flash に送信
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-1.5-flash',
             contents=user_content,
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,

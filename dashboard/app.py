@@ -1313,7 +1313,7 @@ def _generate_single_activity_analysis(activity_id: str, report_type: str = "lon
 
 import concurrent.futures
 
-def _auto_generate_recent_reports(user_id: str, count: int = 5):
+def _auto_generate_recent_reports(user_id: str, count: int = 2):
     """Automatically generate short and long reports for the last N activities in parallel."""
     try:
         supabase = get_supabase_client()
