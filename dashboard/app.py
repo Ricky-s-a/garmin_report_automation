@@ -978,11 +978,11 @@ def get_activity_gpx(activity_id: str):
         
     return df_filtered.to_dict(orient="records")
 
-def _generate_single_activity_analysis(activity_id: str, report_type: str = "long", model: str = "gemini-1.5-flash", regenerate: bool = False):
+def _generate_single_activity_analysis(activity_id: str, report_type: str = "long", model: str = "gemini-2.0-flash", regenerate: bool = False):
     # Allowlist to prevent arbitrary model injection
     ALLOWED_MODELS = {"gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash"}
     if model not in ALLOWED_MODELS:
-        model = "gemini-1.5-flash"
+        model = "gemini-2.0-flash"
     try:
         supabase = get_supabase_client()
         response = supabase.table("activities").select("*").eq("activityId", activity_id).execute()
@@ -1282,7 +1282,7 @@ def _generate_single_activity_analysis(activity_id: str, report_type: str = "lon
     for attempt in range(max_retries):
         try:
             response = client.models.generate_content(
-                model=model,
+                model=model if model else "gemini-2.0-flash",
                 contents=user_content,
                 config=types.GenerateContentConfig(
                     system_instruction=system_instruction,
@@ -1358,7 +1358,7 @@ def _auto_generate_recent_reports(user_id: str, count: int = 2):
         logging.error(f"Error in _auto_generate_recent_reports: {e}")
 
 @app.get("/api/activities/{activity_id}/analysis")
-def get_activity_analysis(activity_id: str, regenerate: bool = False, model: str = "gemini-1.5-flash", report_type: str = "long"):
+def get_activity_analysis(activity_id: str, regenerate: bool = False, model: str = "gemini-2.0-flash", report_type: str = "long"):
     try:
         res = _generate_single_activity_analysis(activity_id, report_type, model, regenerate)
         return res

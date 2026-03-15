@@ -682,7 +682,7 @@ async function loadActivityDetails(activity, allActivities) {
     const aiContent = document.getElementById('ai-analysis-content');
 
     async function runAnalysis(regenerate = false, reportType = "short") {
-        const selectedModel = document.getElementById('model-select')?.value || 'gemini-1.5-flash';
+        const selectedModel = document.getElementById('model-select')?.value || 'gemini-2.0-flash';
         const modelLabel = document.getElementById('model-select')?.options[document.getElementById('model-select').selectedIndex]?.text || selectedModel;
 
         let seconds = 0;
@@ -730,7 +730,7 @@ async function loadActivityDetails(activity, allActivities) {
 
         // Short form UI
         if (activity.aiAnalysisShort) {
-            const usedModel = activity.usedModelShort || 'gemini-1.5-flash';
+            const usedModel = activity.usedModelShort || 'gemini-2.0-flash';
             const html = renderAnalysisHtml(activity.aiAnalysisShort);
             htmlContent += `
                 <div style="margin-bottom: 20px;">
@@ -755,7 +755,7 @@ async function loadActivityDetails(activity, allActivities) {
 
         // Long form UI
         if (activity.aiAnalysis) {
-            const usedModel = activity.usedModelLong || 'gemini-1.5-flash';
+            const usedModel = activity.usedModelLong || 'gemini-2.0-flash';
             const html = renderAnalysisHtml(activity.aiAnalysis);
             htmlContent += `
                 <div style="margin-bottom: 10px;">
