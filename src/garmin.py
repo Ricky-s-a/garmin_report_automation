@@ -176,12 +176,12 @@ def fetch_garmin_data(
     
     # Read existing records from Supabase to detect updates and deduplicate against Strava
     existing_records = {}  # activityId -> {activityName, description, startTimeLocal, source}
-    fourteen_days_ago = (date.today() - timedelta(days=14)).isoformat()
+    one_year_ago = (date.today() - timedelta(days=365)).isoformat()
     try:
         response = supabase.table("activities") \
             .select("activityId,activityName,description,startTimeLocal,source") \
             .eq("user_id", user_id) \
-            .gte("startTimeLocal", fourteen_days_ago) \
+            .gte("startTimeLocal", one_year_ago) \
             .execute()
         for row in response.data:
             existing_records[str(row['activityId'])] = {
@@ -211,8 +211,8 @@ def fetch_garmin_data(
         oldest_date = str(batch[-1].get('startTimeLocal', '9999-12-31'))[:10]
         new_in_batch = [a for a in batch if str(a.get('activityId')) not in existing_ids]
         
-        # Stop if we are older than 14 days AND there are no new records in this batch
-        if oldest_date < fourteen_days_ago and len(new_in_batch) == 0:
+        # Stop if we are older than 1 year AND there are no new records in this batch
+        if oldest_date < one_year_ago and len(new_in_batch) == 0:
             logging.info("Reached historical data that is already saved. Stopping fetch.")
             break
             
@@ -386,6 +386,7 @@ def fetch_garmin_data(
     logging.info(f"Saved {new_records} new activities, updated {updated_records} existing activities to Supabase")
     
     # Return ONLY the last 7 days for Gemini to analyze
+    fourteen_days_ago = (date.today() - timedelta(days=14)).isoformat()
     recent_activities = [
         a for a in running_activities 
         if str(a.get('startTimeLocal', ''))[:10] >= fourteen_days_ago

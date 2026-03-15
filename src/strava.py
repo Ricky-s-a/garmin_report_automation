@@ -164,27 +164,18 @@ def fetch_strava_data_with_dedup(user_id: str):
         logging.info(f"Strava not connected for user {user_id}")
         return []
 
-    # 1. Get existing activity START times from DB to deduplicate
-    # Filter to last 14 days to ensure recent activities are caught (including Garmin ones just synced)
-    fourteen_days_ago = (datetime.now(timezone.utc) - timedelta(days=14)).strftime("%Y-%m-%d")
+    # Deduplicate against ALL existing activities for this user
     existing_q = supabase.table("activities") \
-        .select("startTimeLocal, source, activityId") \
+        .select("startTimeLocal, distance") \
         .eq("user_id", user_id) \
-        .gte("startTimeLocal", fourteen_days_ago) \
         .execute()
-    existing_starts_utc = []
     
-    # For robust matching, we ideally need a startTimeGMT column. 
-    # If not present, we assume startTimeLocal is roughly correct but it's risky.
-    # Let's check if we can get GPX points' first point time as a proxy, or just use startTimeLocal
-    # In a real system, adding startTimeGMT to 'activities' table is best for maintainability.
-    
+    existing_data = [] # List of (datetime, distance)
     for row in existing_q.data:
         try:
-            # We assume Garmin records in DB were saved with JST or local time.
-            # Strava records in DB are also saved with startTimeLocal.
             st = datetime.fromisoformat(row['startTimeLocal'].replace(" ", "T")).replace(tzinfo=None)
-            existing_starts_utc.append(st)
+            dist = float(row.get('distance') or 0)
+            existing_data.append((st, dist))
         except:
             pass
 
@@ -206,12 +197,24 @@ def fetch_strava_data_with_dedup(user_id: str):
         s_start_str = s_act.get('start_date_local') # "2023-01-01T12:00:00Z"
         s_start = datetime.fromisoformat(s_start_str.replace("Z", "")).replace(tzinfo=None)
         
-        # Deduplication check: +/- 5 minutes (Strava vs Garmin can have slight offsets)
+        # Deduplication check: +/- 10 minutes AND distance within 5%
         is_duplicate = False
-        for e_start in existing_starts_utc:
-            if abs((s_start - e_start).total_seconds()) < 300:
-                is_duplicate = True
-                break
+        s_dist = float(s_act.get('distance') or 0)
+        
+        for e_start, e_dist in existing_data:
+            time_diff = abs((s_start - e_start).total_seconds())
+            dist_diff = abs(s_dist - e_dist)
+            
+            # Check if within 10 minutes (600s)
+            if time_diff < 600:
+                # If time is very close (< 2 min), consider duplicate regardless of distance details
+                if time_diff < 120:
+                    is_duplicate = True
+                    break
+                # If time is roughly close, check distance (within 5% or 300m)
+                if e_dist > 0 and (dist_diff / e_dist < 0.05 or dist_diff < 300):
+                    is_duplicate = True
+                    break
         
         if is_duplicate:
             logging.info(f"Skipping Strava activity {s_id} (Duplicate of existing activity)")

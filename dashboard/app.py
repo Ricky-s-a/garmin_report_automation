@@ -60,10 +60,12 @@ from typing import Optional
 
 class CredentialRequest(BaseModel):
     user_id: str
-    garmin_email: str
-    garmin_password: str
+    garmin_email: Optional[str] = ""
+    garmin_password: Optional[str] = ""
     runner_profile: str = ""
     max_hr: Optional[int] = None
+    resting_hr: Optional[int] = None
+    weekly_target_distance: Optional[float] = None
 
 class TrailPresetsRequest(BaseModel):
     user_id: str
@@ -142,6 +144,9 @@ def save_credentials(req: CredentialRequest):
             data["runner_profile"] = req.runner_profile
         if req.max_hr is not None:
             data["max_hr"] = req.max_hr
+        
+        # Note: resting_hr and weekly_target_distance are currently managed in localStorage 
+        # because the database columns do not exist yet.
 
         # Upsert: check if exists
         existing = supabase.table("user_profiles").select("*").eq("user_id", req.user_id).execute()
@@ -168,7 +173,10 @@ def get_credentials(user_id: str):
                 "last_longterm_analysis": row.get("last_longterm_analysis", ""),
                 "last_longterm_model": row.get("last_longterm_model", "")
             }
-        return {"garmin_email": "", "runner_profile": "", "max_hr": None}
+        return {
+            "garmin_email": "", "runner_profile": "", "max_hr": None,
+            "last_upcoming_menu": "", "last_longterm_analysis": "", "last_longterm_model": ""
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

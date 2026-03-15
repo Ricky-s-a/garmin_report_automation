@@ -237,16 +237,13 @@ function setupNavigation() {
                 const res = await fetch(`/api/garmin-credentials?user_id=${encodeURIComponent(currentUser.id)}`);
                 if (res.ok) {
                     const data = await res.json();
-                    if (data.garmin_email) {
-                        document.getElementById('settings-garmin-email').value = data.garmin_email;
-                        document.getElementById('settings-garmin-password').value = '********'; // Masked password
-                        document.getElementById('settings-runner-profile').value = data.runner_profile || '';
-                        document.getElementById('settings-max-hr').value = data.max_hr || '';
-                        document.getElementById('settings-resting-hr').value = localStorage.getItem('garmin_resting_hr') || '';
-                        document.getElementById('settings-weekly-target').value = localStorage.getItem('garmin_weekly_target') || 50;
-                        // Optional clear status msg
-                        document.getElementById('settings-status').textContent = '';
-                    }
+                    document.getElementById('settings-garmin-email').value = data.garmin_email || '';
+                    document.getElementById('settings-garmin-password').value = data.garmin_email ? '********' : ''; 
+                    document.getElementById('settings-runner-profile').value = data.runner_profile || '';
+                    document.getElementById('settings-max-hr').value = data.max_hr || '';
+                    document.getElementById('settings-resting-hr').value = localStorage.getItem('garmin_resting_hr') || '';
+                    document.getElementById('settings-weekly-target').value = localStorage.getItem('garmin_weekly_target') || 50;
+                    document.getElementById('settings-status').textContent = '';
                 }
             } catch (e) {
                 console.error("Failed to fetch settings", e);
@@ -296,10 +293,10 @@ function setupNavigation() {
         const mhr = maxHrStr ? parseInt(maxHrStr) : null;
         const status = document.getElementById('settings-status');
 
-        if (!email || !password) {
-            status.textContent = "Please fill in all fields.";
-            status.style.color = "red";
-            return;
+        if (!currentUser || !currentUser.id) {
+             status.textContent = "Please login first.";
+             status.style.color = "red";
+             return;
         }
 
         btnSaveCredentials.disabled = true;
@@ -307,13 +304,16 @@ function setupNavigation() {
         status.style.color = "#64748b";
 
         try {
+            const restingHrVal = document.getElementById('settings-resting-hr').value;
+            const weeklyTargetVal = document.getElementById('settings-weekly-target').value;
+
             const res = await fetch('/api/garmin-credentials', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     user_id: currentUser.id,
                     garmin_email: email,
-                    garmin_password: password,
+                    garmin_password: password === '********' ? '' : password,
                     runner_profile: profile,
                     max_hr: mhr
                 })
@@ -321,12 +321,11 @@ function setupNavigation() {
             if (res.ok) {
                 status.textContent = "Settings saved successfully!";
                 userMaxHr = mhr; // update locally
-                const restingHrVal = document.getElementById('settings-resting-hr').value;
                 if (restingHrVal) {
                     userRestingHr = parseInt(restingHrVal);
                     localStorage.setItem('garmin_resting_hr', restingHrVal);
                 }
-                localStorage.setItem('garmin_weekly_target', document.getElementById('settings-weekly-target').value || 50);
+                localStorage.setItem('garmin_weekly_target', weeklyTargetVal || 50);
 
                 status.style.color = "green";
                 setTimeout(() => modal.classList.add('hidden'), 1500);
@@ -569,8 +568,16 @@ async function fetchUserSettings() {
         if (res.ok) {
             const data = await res.json();
             userMaxHr = data.max_hr || null;
-            userRestingHr = data.resting_hr || parseInt(localStorage.getItem('garmin_resting_hr') || '55') || 55;
+            userRestingHr = parseInt(localStorage.getItem('garmin_resting_hr') || '55') || 55;
             
+            // Also update modal inputs if they exist (important if modal is open)
+            const mhrInput = document.getElementById('settings-max-hr');
+            if (mhrInput && !mhrInput.value) mhrInput.value = data.max_hr || '';
+            const rhrInput = document.getElementById('settings-resting-hr');
+            if (rhrInput && !rhrInput.value) rhrInput.value = localStorage.getItem('garmin_resting_hr') || '';
+            const wtInput = document.getElementById('settings-weekly-target');
+            if (wtInput && !wtInput.value) wtInput.value = localStorage.getItem('garmin_weekly_target') || 50;
+
             lastLongTermData = {
                 menu: data.last_upcoming_menu || "",
                 analysis: data.last_longterm_analysis || "",
