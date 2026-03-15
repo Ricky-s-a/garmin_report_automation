@@ -1014,7 +1014,10 @@ def _get_pace_zone_context(supabase, user_id: str) -> str:
         logging.warning(f"Error fetching pace zone context: {e}")
         return ""
 
-def _build_longterm_user_content(supabase, req, runner_profile, rolling_stats_row):
+def _build_longterm_user_content(supabase, req, profile_data, rolling_stats_row):
+    runner_profile = profile_data.get("runner_profile", "") if profile_data else ""
+    max_hr = profile_data.get("max_hr") if profile_data else None
+    
     rolling_context = ""
     if rolling_stats_row:
         rolling_context = _format_rolling_stats_for_prompt(rolling_stats_row)
@@ -1044,6 +1047,8 @@ def _build_longterm_user_content(supabase, req, runner_profile, rolling_stats_ro
 
 【現在のユーザープロファイル・目標】
 {runner_profile if runner_profile else "記載なし"}
+{f"設定最大心拍数: {max_hr} bpm" if max_hr else ""}
+
 
 {rolling_context if rolling_context else "過去の統計データがまだ十分ではありません。"}
 
@@ -1479,8 +1484,8 @@ def get_trends_analysis(req: TrendsAnalysisRequest):
         supabase = get_supabase_client()
         
         # 1. Fetch Runner Profile
-        profile_resp = supabase.table("user_profiles").select("runner_profile").eq("user_id", req.user_id).execute()
-        runner_profile = profile_resp.data[0].get("runner_profile", "") if profile_resp.data else ""
+        profile_resp = supabase.table("user_profiles").select("*").eq("user_id", req.user_id).execute()
+        profile_data = profile_resp.data[0] if profile_resp.data else {}
         
         # 2. Fetch Rolling Stats
         rs_resp = supabase.table("activity_rolling_stats").select("*").eq("user_id", req.user_id).execute()
@@ -1498,7 +1503,7 @@ def get_trends_analysis(req: TrendsAnalysisRequest):
             system_instruction = "You are a running coach analyzing long-term trends."
             
         # 5. Construct User Prompt
-        user_content = _build_longterm_user_content(supabase, req, runner_profile, rs_resp.data[0] if rs_resp.data else None)
+        user_content = _build_longterm_user_content(supabase, req, profile_data, rs_resp.data[0] if rs_resp.data else None)
 
         # 6. Call Gemini
         api_key = os.environ.get("GEMINI_API_KEY")
@@ -1549,8 +1554,8 @@ def get_trends_prompt_preview(req: TrendsAnalysisRequest):
     try:
         supabase = get_supabase_client()
         # 1. Fetch Runner Profile
-        profile_resp = supabase.table("user_profiles").select("runner_profile").eq("user_id", req.user_id).execute()
-        runner_profile = profile_resp.data[0].get("runner_profile", "") if profile_resp.data else ""
+        profile_resp = supabase.table("user_profiles").select("*").eq("user_id", req.user_id).execute()
+        profile_data = profile_resp.data[0] if profile_resp.data else {}
         # 2. Fetch Rolling Stats
         rs_resp = supabase.table("activity_rolling_stats").select("*").eq("user_id", req.user_id).execute()
         rolling_context = ""
@@ -1564,7 +1569,7 @@ def get_trends_prompt_preview(req: TrendsAnalysisRequest):
                 system_instruction = f.read().strip()
         except Exception:
             system_instruction = "You are a running coach analyzing long-term trends."
-        user_content = _build_longterm_user_content(supabase, req, runner_profile, rs_resp.data[0] if rs_resp.data else None)
+        user_content = _build_longterm_user_content(supabase, req, profile_data, rs_resp.data[0] if rs_resp.data else None)
         full_prompt = f"# SYSTEM PROMPT\n{system_instruction}\n\n# USER PROMPT\n{user_content}"
         return {"prompt": full_prompt}
     except Exception as e:
